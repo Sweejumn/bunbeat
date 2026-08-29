@@ -183,6 +183,16 @@ export function PlayerBar(p: Props) {
           >
             🥁 节拍器
           </button>
+          {/* music visualizer toggle (independent of the metronome) */}
+          <button
+            onClick={p.onToggleVisualizer}
+            className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors ${
+              p.visOn ? 'bg-run text-ink' : 'bg-line text-white/60 hover:text-white'
+            }`}
+            title="音乐可视化：波形 / 频谱 / 拍点 / 点击"
+          >
+            🎵 可视化
+          </button>
         </div>
 
         {/* metronome settings (visible while enabled) */}
@@ -224,18 +234,10 @@ export function PlayerBar(p: Props) {
                 </button>
               )}
             </span>
-            <button
-              onClick={p.onToggleVisualizer}
-              className={`rounded px-2 py-0.5 ${
-                p.visOn ? 'bg-run text-ink' : 'bg-line text-white/60 hover:text-white'
-              }`}
-              title="节拍可视化调试"
-            >
-              📊 节拍可视化
-            </button>
           </div>
         )}
-        {/* beat-mode selector */}
+        {/* beat-mode selector (metronome-related) */}
+        {p.metronomeOn && (
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line/60 pt-2 text-xs text-white/50">
           <span>拍点模式</span>
           {BEAT_MODES.map((m) => (
@@ -259,8 +261,10 @@ export function PlayerBar(p: Props) {
             </span>
           )}
         </div>
+        )}
 
-        {/* manual beat calibration */}
+        {/* manual beat calibration (metronome-related) */}
+        {p.metronomeOn && (
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line/60 pt-2 text-xs text-white/50">
           <span>校准</span>
           <TapTempo onCalibrate={p.onSetCal} getCurrentTime={p.getCurrentTime} />
@@ -314,6 +318,7 @@ export function PlayerBar(p: Props) {
           )}
           <span className="text-white/25">校准即时生效，边听边调</span>
         </div>
+        )}
         {p.visualizer}
       </div>
     </div>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
-import { BeatVisualizer } from './components/BeatVisualizer'
 import { ModePicker } from './components/ModePicker'
+import { MusicVisualizer } from './components/MusicVisualizer'
 import { PlayerBar } from './components/PlayerBar'
 import { RecommendPanel } from './components/RecommendPanel'
 import { SongTable } from './components/SongTable'
@@ -69,6 +69,36 @@ export default function App() {
   const onSetCal = useCallback((bpm: number | null, firstBeat: number | null) => {
     if (bpm != null) setCalBpm(bpm)
     if (firstBeat != null) setCalFirstBeat(firstBeat)
+  }, [])
+
+  // ------------------------------------------------------------------ audio capture
+  // One MediaElementSource + AnalyserNode for the music visualizer. The audio
+  // element can only have a single MediaElementSource, so create it lazily on
+  // the user's toggle gesture and keep it for the page's lifetime.
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const ensureVisualizerAnalyser = useCallback((): AnalyserNode | null => {
+    if (analyserRef.current) return analyserRef.current
+    const audio = audioRef.current
+    if (!audio) return null
+    try {
+      const Ctor =
+        window.AudioContext ??
+        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      if (!Ctor) return null
+      const actx = new Ctor()
+      const src = actx.createMediaElementSource(audio)
+      const analyser = actx.createAnalyser()
+      analyser.fftSize = 2048
+      analyser.smoothingTimeConstant = 0.8
+      src.connect(analyser)
+      analyser.connect(actx.destination)
+      void actx.resume()
+      audio.addEventListener('play', () => void actx.resume())
+      analyserRef.current = analyser
+    } catch (e) {
+      console.warn('music visualizer audio capture failed:', e)
+    }
+    return analyserRef.current
   }, [])
 
   // Stable accessors (identity must not change per render — otherwise the
@@ -301,6 +331,40 @@ export default function App() {
     }
   }, [currentIndex, playlist.length, volume])
 
+  // ------------------------------------------------------- active beat map
+  // The beat map the metronome clicks and the visualizer shows. Priority:
+  //  0. MANUAL calibration (tap tempo / user BPM / user first beat) —
+  //     regenerates the grid client-side, applies instantly
+  //  1. the stretched file's OWN map for this mode (ground truth of what
+  //     actually plays — captures atempo's tiny ratio error too)
+  //  2. the original song's map for this mode, converted to the stretched
+  //     timeline (divide by ratio)
+  const activeBeatMap = useMemo(() => {
+    const item = currentIndex >= 0 ? playlist[currentIndex] : null
+    const srcBpm = item?.song.original_bpm
+    if (!item || srcBpm == null || srcBpm <= 0) return null
+    const ratio = targetBpm / srcBpm
+    const auto =
+      item.processedBeatMaps?.[beatMode] ??
+      (beatMode === 'grid' ? item.processedBeatTimes : null)
+    const fromSong =
+      beatMode === 'grid' ? item.song.beat_times : item.song.beat_maps?.[beatMode]
+    if (calBpm != null || calFirstBeat != null) {
+      const autoMap = auto ?? (fromSong ? fromSong.map((t) => t / ratio) : null)
+      const autoRate = autoMap
+        ? (autoMap[autoMap.length - 1] - autoMap[0]) / Math.max(1, autoMap.length - 1)
+        : 60 / targetBpm
+      const period = calBpm != null ? 60 / calBpm : autoRate
+      const anchor = calFirstBeat ?? (autoMap ? autoMap[0] : 0)
+      const dur = audioRef.current?.duration ?? 600
+      const count = Math.max(2, Math.ceil((dur - anchor) / period) + 1)
+      return Array.from({ length: count }, (_, k) => anchor + k * period)
+    }
+    if (auto && auto.length >= 2) return auto
+    if (fromSong && fromSong.length >= 2) return fromSong.map((t) => t / ratio)
+    return null
+  }, [currentIndex, playlist, targetBpm, beatMode, calBpm, calFirstBeat])
+
   // -------------------------------------------------------------- metronome
   useEffect(() => {
     const audio = audioRef.current
@@ -308,46 +372,11 @@ export default function App() {
     if (!metronomeRef.current) metronomeRef.current = new Metronome(audio)
     const m = metronomeRef.current
     const item = currentIndex >= 0 ? playlist[currentIndex] : null
-    const off = item?.song.beat_offset
-    const srcBpm = item?.song.original_bpm
-    // Click source priority for the selected beat mode:
-    //  0. MANUAL calibration (tap tempo / user BPM / user first beat) —
-    //     regenerates the grid client-side, applies instantly
-    //  1. the stretched file's OWN map for this mode (ground truth of what
-    //     actually plays — captures atempo's tiny ratio error too)
-    //  2. the original song's map for this mode, converted to the stretched
-    //     timeline (divide by ratio)
-    //  3. fixed grid anchored at the first-beat phase (fallback)
-    let beatMap: number[] | null = null
     let phase: number | null = null
-    if (item && srcBpm != null && srcBpm > 0) {
-      const ratio = targetBpm / srcBpm
-      const auto =
-        item.processedBeatMaps?.[beatMode] ??
-        (beatMode === 'grid' ? item.processedBeatTimes : null)
-      const fromSong =
-        beatMode === 'grid' ? item.song.beat_times : item.song.beat_maps?.[beatMode]
-      if (calBpm != null || calFirstBeat != null) {
-        // Manual grid from (BPM, first beat); keep the auto rate when only
-        // one of the two is set.
-        const autoMap = auto ?? (fromSong ? fromSong.map((t) => t / ratio) : null)
-        const autoRate = autoMap
-          ? (autoMap[autoMap.length - 1] - autoMap[0]) / Math.max(1, autoMap.length - 1)
-          : 60 / targetBpm
-        const period = calBpm != null ? 60 / calBpm : autoRate
-        const anchor = calFirstBeat ?? (autoMap ? autoMap[0] : 0)
-        const dur = audioRef.current?.duration ?? 600
-        const count = Math.max(2, Math.ceil((dur - anchor) / period) + 1)
-        beatMap = Array.from({ length: count }, (_, k) => anchor + k * period)
-      } else if (auto && auto.length >= 2) {
-        beatMap = auto
-      } else if (fromSong && fromSong.length >= 2) {
-        beatMap = fromSong.map((t) => t / ratio)
-      } else if (off != null) {
-        phase = ((off * srcBpm) / targetBpm) % (60 / targetBpm)
-      }
+    if (!activeBeatMap && item?.song.beat_offset && item.song.original_bpm) {
+      phase = ((item.song.beat_offset * item.song.original_bpm) / targetBpm) % (60 / targetBpm)
     }
-    m.setBeatMap(beatMap)
+    m.setBeatMap(activeBeatMap)
     m.setPhase(phase)
     m.setBpm(targetBpm)
     // Manual nudge: percent of a beat -> seconds, clamped to +/- half beat.
@@ -357,7 +386,7 @@ export default function App() {
     // Record scheduled clicks for the visualizer; clear on song change.
     const unsub = m.onClick((t) => clicksRef.current.push(t))
     return () => unsub()
-  }, [targetBpm, metronomeVolume, metronomeOn, phaseNudge, beatMode, calBpm, calFirstBeat, currentIndex, playlist])
+  }, [targetBpm, metronomeVolume, metronomeOn, phaseNudge, activeBeatMap, currentIndex])
 
   useEffect(() => {
     const m = metronomeRef.current
@@ -376,27 +405,7 @@ export default function App() {
   const analyzedCount = songs.filter((s) => s.bpm_status === 'done' || s.bpm_status === 'failed').length
   const inProgress = analyzingCount + queuedCount
 
-  // Beat-ruler data for the current song, memoized per song so the visualizer
-  // never re-renders on every timeupdate (that used to restart its timers and
-  // clear click dots ~4x/sec — a resource runaway).
   const curItem = currentIndex >= 0 ? playlist[currentIndex] : null
-  const vizData = useMemo(() => {
-    if (!curItem || !curItem.song.original_bpm || curItem.song.original_bpm <= 0) {
-      return { predicted: [] as number[], actual: [] as number[] }
-    }
-    const ratio = targetBpm / curItem.song.original_bpm
-    // 预期: the ORIGINAL song's map for this mode, mapped to the stretched timeline
-    const predicted =
-      beatMode === 'grid'
-        ? (curItem.song.beat_times ?? []).map((t) => t / ratio)
-        : (curItem.song.beat_maps?.[beatMode] ?? []).map((t) => t / ratio)
-    // 实际: what the metronome actually clicks (stretched file's own map)
-    const actual =
-      curItem.processedBeatMaps?.[beatMode] ??
-      (beatMode === 'grid' ? curItem.processedBeatTimes : null) ??
-      predicted
-    return { predicted, actual }
-  }, [curItem, targetBpm, beatMode])
 
   return (
     <div className="min-h-full pb-44">
@@ -478,12 +487,12 @@ export default function App() {
           phaseNudge={phaseNudge}
           visualizer={
             visOn && curItem ? (
-              <BeatVisualizer
+              <MusicVisualizer
                 key={curItem.song.id}
-                predicted={vizData.predicted}
-                actual={vizData.actual}
-                getCurrentTime={getCurrentTime}
+                beats={activeBeatMap ?? []}
                 clicksRef={clicksRef}
+                getCurrentTime={getCurrentTime}
+                analyser={ensureVisualizerAnalyser()}
               />
             ) : null
           }
