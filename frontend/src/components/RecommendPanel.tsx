@@ -20,6 +20,12 @@ function Stars({ n }: { n: number }) {
   )
 }
 
+/** Tempo change in percent (relative to the original): |target-orig| / orig * 100 */
+function diffPct(orig: number | null | undefined, target: number): number {
+  if (orig == null || orig <= 0) return 0
+  return Math.round((Math.abs(orig - target) / orig) * 1000) / 10
+}
+
 export function RecommendPanel({ recs, targetBpm, processing, onSelected, onPlay }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
@@ -81,8 +87,11 @@ export function RecommendPanel({ recs, targetBpm, processing, onSelected, onPlay
               <div className="w-14 text-right">
                 <Stars n={r.score} />
               </div>
-              <div className="hidden w-14 text-right text-xs text-white/30 md:block">
-                差 {r.distance.toFixed(0)}
+              <div
+                className="hidden w-24 text-right text-xs text-white/30 md:block"
+                title={`距目标 ${Math.round(targetBpm)} BPM 差 ${r.distance.toFixed(1)} BPM`}
+              >
+                差 {r.distance.toFixed(0)} · {diffPct(r.song.original_bpm, targetBpm)}%
               </div>
             </li>
           ))}
@@ -116,9 +125,9 @@ export function RecommendPanel({ recs, targetBpm, processing, onSelected, onPlay
           </p>
         )}
         <p className="w-full text-xs text-white/30">
-          图例：<span className="text-sky-400">↑</span> 需加快 · <span className="text-orange-400">↓</span> 需减慢
-          （箭头越多差异越大）· <span className="text-red-400">✕</span> 差异过大无法处理 ·{' '}
-          <span className="text-white/40">=</span> 与目标一致
+          图例：<span className="text-red-400">↑/↓</span> 变速超过 3%（听感有明显变化）·{' '}
+          <span className="text-run">=</span> 与目标几乎一致 ·{' '}
+          <span className="text-red-400">✕</span> 差异过大无法处理
         </p>
       </div>
     </section>
