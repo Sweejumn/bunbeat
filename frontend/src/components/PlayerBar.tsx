@@ -49,10 +49,12 @@ function TapTempo({
   getCurrentTime: () => number
   onTaps: (taps: number[]) => void
 }) {
-  // Tapping always computes BPM; the first beat is only set while this
-  // switch is on (default off).
+  // Tapping always computes BPM; it is applied to the calibration only
+  // while the "设首拍" switch is on (default off) — otherwise the result
+  // is just shown for preview.
   const [setFirstBeat, setSetFirstBeat] = useState(false)
   const [taps, setTaps] = useState<number[]>([])
+  const [computedBpm, setComputedBpm] = useState<number | null>(null)
   const lastTapRef = useRef(0)
 
   const handleTap = () => {
@@ -65,17 +67,19 @@ function TapTempo({
   }
 
   useEffect(() => {
-    // BPM is computed after 8 taps (median interval). First beat is applied
-    // only when the "设首拍" switch is on. Tap marks on the ruler are kept
-    // until cleared manually or the track changes (useful for comparing
-    // your taps against the detected beats).
+    // After 8 taps (median interval): compute BPM. Apply (and set first
+    // beat) only when the switch is on; otherwise just show the result.
     if (taps.length < 8) return
     const ivs = taps.slice(1).map((x, i) => x - taps[i]).filter((x) => x > 0.1)
     if (ivs.length >= 2) {
       const sorted = [...ivs].sort((a, b) => a - b)
       const period = sorted[Math.floor(sorted.length / 2)] // median
-      const firstBeat = setFirstBeat ? Math.max(0, Math.round(taps[0] * 1000) / 1000) : null
-      onCalibrate(Math.round(60 / period), firstBeat)
+      const bpm = Math.round(60 / period)
+      setComputedBpm(bpm)
+      if (setFirstBeat) {
+        const firstBeat = Math.max(0, Math.round(taps[0] * 1000) / 1000)
+        onCalibrate(bpm, firstBeat)
+      }
     }
     setTaps([])
   }, [taps, onCalibrate, onTaps, setFirstBeat])
@@ -85,7 +89,7 @@ function TapTempo({
       <button
         onClick={handleTap}
         className="rounded bg-line px-2 py-1 text-white/70 hover:text-white"
-        title="跟着音乐拍子点按 8 下，自动计算 BPM；每次点按都会在拍点标尺上留下黄色标记"
+        title="跟着音乐拍子点按 8 下，自动计算 BPM；每次点按都会在拍点标尺上留下黄色标记。开关关闭时只预览计算结果，打开时才应用到校准"
       >
         👆 点按打拍（{taps.length}/8）
       </button>
@@ -94,10 +98,20 @@ function TapTempo({
         className={`rounded px-2 py-1 transition-colors ${
           setFirstBeat ? 'bg-accent text-ink' : 'bg-line text-white/60 hover:text-white'
         }`}
-        title="开启后，打拍会把第 1 拍设为首拍（默认关闭）"
+        title="关闭（默认）：打拍只预览计算出的 BPM，不应用；开启：敲 8 下后同时应用 BPM 并设置首拍"
       >
         🎯 设首拍 {setFirstBeat ? '开' : '关'}
       </button>
+      {computedBpm != null && (
+        <span
+          className={`rounded px-2 py-1 font-mono text-sm ${
+            setFirstBeat ? 'bg-run/15 text-run' : 'bg-line text-white/60'
+          }`}
+          title={setFirstBeat ? '已应用到校准' : '仅计算预览，开启「设首拍」后重新敲 8 下才会应用'}
+        >
+          ≈{computedBpm} BPM{setFirstBeat ? ' ✓' : '（预览）'}
+        </span>
+      )}
     </span>
   )
 }
