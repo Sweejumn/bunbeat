@@ -7,6 +7,7 @@ unlimited concurrent FFmpeg/librosa processes.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -78,6 +79,7 @@ async def run_analysis(song_id: str) -> None:
             bpm_confidence=result.confidence,
             duration=duration,
             beat_offset=result.beat_offset,
+            beat_times=json.dumps(result.beat_times) if result.beat_times else None,
         )
         logger.info("song %s -> %s BPM (conf=%.2f)", song["filename"], result.bpm, result.confidence)
     except Exception as exc:  # noqa: BLE001

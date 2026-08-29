@@ -43,6 +43,7 @@ def init_db() -> None:
                 bpm_status    TEXT NOT NULL DEFAULT 'pending', -- pending|analyzing|done|failed
                 bpm_error     TEXT,
                 beat_offset   REAL,
+                beat_times    TEXT,
                 file_path     TEXT NOT NULL,
                 mime_type     TEXT,
                 size          INTEGER NOT NULL DEFAULT 0,
@@ -72,6 +73,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     cols = {row[1] for row in conn.execute("PRAGMA table_info(songs)")}
     if "beat_offset" not in cols:
         conn.execute("ALTER TABLE songs ADD COLUMN beat_offset REAL")
+    if "beat_times" not in cols:
+        conn.execute("ALTER TABLE songs ADD COLUMN beat_times TEXT")
 
 
 # --------------------------------------------------------------------------
@@ -115,7 +118,8 @@ def update_song(song_id: str, **fields: Any) -> dict[str, Any] | None:
         return get_song(song_id)
     allowed = {
         "title", "artist", "duration", "original_bpm", "bpm_confidence",
-        "bpm_status", "bpm_error", "beat_offset", "file_path", "mime_type", "size",
+        "bpm_status", "bpm_error", "beat_offset", "beat_times",
+        "file_path", "mime_type", "size",
     }
     cols = [k for k in fields if k in allowed]
     if not cols:

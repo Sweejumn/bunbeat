@@ -40,8 +40,10 @@ class Settings:
     FFMPEG_PATH: str | None = os.environ.get("RUNBPM_FFMPEG_PATH") or None
 
     # --- BPM analysis ----------------------------------------------------
-    # Only the first N seconds are analysed to keep uploads snappy.
-    ANALYZE_DURATION_SECONDS: float = 90.0
+    # Tempo is estimated on a window of the file; the whole (capped) file is
+    # analysed so every beat position is known — the metronome then clicks on
+    # the real beats (no cumulative drift) instead of a fixed grid.
+    ANALYZE_DURATION_SECONDS: float = 600.0
     ANALYZE_SR: int = 22050
 
     # MIME types used when streaming stored files back to the browser.

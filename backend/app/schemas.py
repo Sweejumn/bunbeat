@@ -1,9 +1,10 @@
 """Pydantic request/response schemas."""
 from __future__ import annotations
 
+import json
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # --- songs ---------------------------------------------------------------
@@ -19,9 +20,20 @@ class SongOut(BaseModel):
     bpm_status: str
     bpm_error: Optional[str] = None
     beat_offset: Optional[float] = None
+    beat_times: Optional[list[float]] = None
     mime_type: Optional[str] = None
     size: int
     created_at: str
+
+    @field_validator("beat_times", mode="before")
+    @classmethod
+    def _parse_beat_times(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except ValueError:
+                return None
+        return v
 
 
 class SongUpdate(BaseModel):

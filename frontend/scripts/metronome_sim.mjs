@@ -20,6 +20,9 @@ class SimMetronome {
     this.phase = 0
     this.phaseKnown = false
     this.phaseOffset = 0
+    this.beatMap = null
+    this.mapIdx = 0
+    this.extrapInterval = 60 / 165
     this.enabled = false
     this.nextTime = 0
     this.scheduled = [] // {mediaTime, ctxTime}
@@ -28,6 +31,14 @@ class SimMetronome {
   setPhase(p) {
     this.phase = p
     this.phaseKnown = p != null
+    if (this.enabled) this.restart()
+  }
+  setBeatMap(times) {
+    const map = times && times.length >= 2 ? [...times].sort((a, b) => a - b) : null
+    if (map && map.length >= 2) {
+      this.extrapInterval = Math.max(0.05, map[map.length - 1] - map[map.length - 2])
+    }
+    this.beatMap = map
     if (this.enabled) this.restart()
   }
   setPhaseOffset(o) {
@@ -39,9 +50,23 @@ class SimMetronome {
     if (on) this.restart()
   }
   restart() {
-    const interval = 60 / this.bpm
     const now = this.audio.currentTime + 0.03
-    if (this.phaseKnown) {
+    if (this.beatMap) {
+      let i = 0
+      while (i < this.beatMap.length && this.beatMap[i] + this.phaseOffset < now - 1e-9) i++
+      this.mapIdx = i
+      if (i < this.beatMap.length) {
+        this.nextTime = this.beatMap[i] + this.phaseOffset
+      } else {
+        const last = this.beatMap[this.beatMap.length - 1] + this.phaseOffset
+        const prev = this.beatMap[this.beatMap.length - 2] + this.phaseOffset
+        this.extrapInterval = Math.max(0.05, last - prev)
+        this.mapIdx = this.beatMap.length
+        this.nextTime = last + this.extrapInterval
+        while (this.nextTime < now) this.nextTime += this.extrapInterval
+      }
+    } else if (this.phaseKnown) {
+      const interval = 60 / this.bpm
       const anchor = this.phase + this.phaseOffset
       const k = Math.max(0, Math.ceil((now - anchor) / interval - 1e-9))
       this.nextTime = anchor + k * interval
@@ -53,7 +78,6 @@ class SimMetronome {
   tick() {
     if (this.audio.paused) return
     const lookahead = 0.25
-    const interval = 60 / this.bpm
     const horizon = this.audio.currentTime + lookahead
     while (this.nextTime < horizon) {
       const mediaTime = this.nextTime
@@ -61,7 +85,22 @@ class SimMetronome {
       if (ctxTime > this.ctx.currentTime + 0.002) {
         this.scheduled.push({ mediaTime, ctxTime })
       }
-      this.nextTime += interval
+      if (this.beatMap) {
+        if (this.mapIdx < this.beatMap.length - 1) {
+          this.mapIdx++
+          this.nextTime = this.beatMap[this.mapIdx] + this.phaseOffset
+        } else if (this.mapIdx === this.beatMap.length - 1) {
+          const last = this.beatMap[this.beatMap.length - 1] + this.phaseOffset
+          const prev = this.beatMap[this.beatMap.length - 2] + this.phaseOffset
+          this.extrapInterval = Math.max(0.05, last - prev)
+          this.mapIdx = this.beatMap.length
+          this.nextTime += this.extrapInterval
+        } else {
+          this.nextTime += this.extrapInterval
+        }
+      } else {
+        this.nextTime += 60 / this.bpm
+      }
     }
   }
   disable() {
@@ -186,6 +225,55 @@ for (const s of m.scheduled) {
   const gridErr = Math.min(Math.abs(off), interval - Math.abs(off))
   assert(gridErr < 1e-6, `negative nudge grid (err ${gridErr.toExponential(2)})`)
 }
+
+// --- scenario 8: beat-map mode — clicks land exactly on map times
+const map = []
+for (let k = 0; k < 20; k++) map.push(2.0 + k * 0.4) // beats at 2.0, 2.4, ..., 9.6 (150 BPM)
+m.setPhaseOffset(0) // reset nudge from previous scenario
+m.setPhase(null) // ensure grid fallback is off
+m.scheduled.length = 0
+audio.currentTime = 2.5
+m.setBeatMap(map)
+m.setEnabled(true)
+m.play(1.0)
+assert(m.scheduled.length >= 2, "map mode schedules clicks")
+for (const s of m.scheduled) {
+  const inMap = map.some((t) => Math.abs(s.mediaTime - t) < 1e-6)
+  assert(inMap, `map click ${s.mediaTime.toFixed(4)} is exactly a map beat`)
+}
+// first click is the first map beat >= enable position (+0.03 lead)
+assert(Math.abs(m.scheduled[0].mediaTime - 2.8) < 1e-6, `first map click at 2.8 (got ${m.scheduled[0].mediaTime})`)
+
+// --- scenario 9: seek backward inside the map re-anchors
+m.scheduled.length = 0
+audio.currentTime = 6.0
+m.restart()
+m.play(0.6)
+assert(Math.abs(m.scheduled[0].mediaTime - 6.4) < 1e-6, `post-seek first click on next map beat 6.4 (got ${m.scheduled[0].mediaTime})`)
+
+// --- scenario 10: past the end of the map -> extrapolate with last interval
+m.scheduled.length = 0
+audio.currentTime = 9.7 // after last map beat 9.6
+m.restart()
+m.play(1.0)
+assert(m.scheduled.length >= 2, "extrapolation schedules clicks")
+for (const s of m.scheduled) {
+  const off = (s.mediaTime - 9.6) % 0.4
+  const err = Math.min(Math.abs(off), 0.4 - Math.abs(off))
+  assert(err < 1e-6, `extrapolated click at ${s.mediaTime.toFixed(3)} continues 0.4s grid (err ${err.toExponential(2)})`)
+}
+
+// --- scenario 11: nudge shifts the whole beat map
+m.scheduled.length = 0
+m.setPhaseOffset(0.2) // +50% of the 0.4s beat
+audio.currentTime = 2.5
+m.restart()
+m.play(0.6)
+for (const s of m.scheduled) {
+  const inMap = map.some((t) => Math.abs(s.mediaTime - (t + 0.2)) < 1e-6)
+  assert(inMap, `nudged map click at ${s.mediaTime.toFixed(4)} (beat+0.2)`)
+}
+m.setPhaseOffset(0) // reset
 
 console.log(failures === 0 ? "\nRESULT: PASS" : `\nRESULT: FAIL (${failures})`)
 process.exit(failures === 0 ? 0 : 1)

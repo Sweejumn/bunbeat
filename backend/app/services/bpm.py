@@ -40,6 +40,7 @@ class BpmResult:
     error: str | None = None
     octave_corrected: bool = False
     beat_offset: float | None = None  # seconds of the first detected beat (original timeline)
+    beat_times: list[float] | None = None  # every detected beat, seconds (original timeline)
 
 
 def _onset_ac(onset_env: np.ndarray) -> np.ndarray:
@@ -197,21 +198,44 @@ def analyze_bpm(path: Path) -> BpmResult:
             error=f"节拍检测失败: {exc}",
         )
 
-    # Confidence from inter-beat interval regularity.
+    # Confidence from the free-running tracker's inter-beat regularity.
     confidence = 0.0
-    beat_offset: float | None = None
     if beats is not None and len(beats) >= 4:
-        intervals = np.diff(np.asarray(beats, dtype=float)) / sr
+        beat_arr = np.asarray(beats, dtype=float)
+        intervals = np.diff(beat_arr) / sr
         mean_iv = float(np.mean(intervals))
         std_iv = float(np.std(intervals))
         if mean_iv > 0:
             cv = std_iv / mean_iv  # coefficient of variation
             confidence = float(np.clip(1.0 - cv * 3.0, 0.0, 1.0))
-        first = float(np.asarray(beats)[0])
-        if np.isfinite(first):
-            # First beat position in seconds — used to phase-align the
-            # metronome with the music after time-stretching.
-            beat_offset = round(first * HOP / sr, 4)
+
+    # Beat map locked to the CORRECTED tempo pulse. The free-running tracker
+    # can lock to a sub-multiple of the reported tempo (e.g. half-time), which
+    # would make the metronome click at the wrong pulse level; re-running the
+    # DP tracker with bpm fixed to the corrected value yields beats at the
+    # right density. The metronome clicks exactly on these positions, so it
+    # never drifts from the music over the course of a song.
+    beat_offset: float | None = None
+    beat_times: list[float] | None = None
+    try:
+        from librosa.beat import __beat_tracker
+
+        mask = __beat_tracker(
+            onset_env,
+            bpm=np.array([bpm]),
+            frame_rate=float(sr) / HOP,
+            tightness=100,
+            trim=True,
+        )
+        frames = np.flatnonzero(mask)
+        if frames.size >= 2:
+            beat_times = [round(float(f) * HOP / sr, 3) for f in frames]
+            beat_offset = beat_times[0]
+    except Exception:  # noqa: BLE001  (private API; fall back to free beats)
+        if beats is not None and len(beats) >= 2:
+            beat_arr = np.asarray(beats, dtype=float)
+            beat_times = [round(float(f) * HOP / sr, 3) for f in beat_arr if np.isfinite(f)]
+            beat_offset = beat_times[0]
 
     duration = None
     try:
@@ -222,4 +246,5 @@ def analyze_bpm(path: Path) -> BpmResult:
     return BpmResult(
         bpm=bpm, confidence=confidence, duration=duration,
         octave_corrected=octave_corrected, beat_offset=beat_offset,
+        beat_times=beat_times,
     )

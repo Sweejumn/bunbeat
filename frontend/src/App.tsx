@@ -229,6 +229,9 @@ export default function App() {
     const onPlay = () => setPlaying(true)
     const onPause = () => setPlaying(false)
     const onSeeked = () => metronomeRef.current?.onSeek()
+    // Buffer stall: stop clicks while the music is stuck; resume on 'playing'.
+    const onWaiting = () => metronomeRef.current?.onPause()
+    const onPlaying = () => metronomeRef.current?.onPlay()
     const onEnded = () => {
       if (currentIndex < playlist.length - 1) setCurrentIndex((i) => i + 1)
       else setCurrentIndex(0)
@@ -238,6 +241,8 @@ export default function App() {
     audio.addEventListener('play', onPlay)
     audio.addEventListener('pause', onPause)
     audio.addEventListener('seeked', onSeeked)
+    audio.addEventListener('waiting', onWaiting)
+    audio.addEventListener('playing', onPlaying)
     audio.addEventListener('ended', onEnded)
     audio.volume = volume
     return () => {
@@ -246,6 +251,8 @@ export default function App() {
       audio.removeEventListener('play', onPlay)
       audio.removeEventListener('pause', onPause)
       audio.removeEventListener('seeked', onSeeked)
+      audio.removeEventListener('waiting', onWaiting)
+      audio.removeEventListener('playing', onPlaying)
       audio.removeEventListener('ended', onEnded)
     }
   }, [currentIndex, playlist.length, volume])
@@ -257,17 +264,24 @@ export default function App() {
     if (!metronomeRef.current) metronomeRef.current = new Metronome(audio)
     const m = metronomeRef.current
     const item = currentIndex >= 0 ? playlist[currentIndex] : null
-    // Phase-align clicks with the music: the first beat of the original
-    // audio sits at beat_offset; after time-stretching by target/original it
-    // moves to beat_offset * original / target, and the beat period becomes
-    // 60/target. Snap the metronome grid to that position.
-    let phase: number | null = null
     const off = item?.song.beat_offset
     const srcBpm = item?.song.original_bpm
-    if (item && off != null && srcBpm != null && srcBpm > 0) {
-      const interval = 60 / targetBpm
-      phase = ((off * srcBpm) / targetBpm) % interval
+    // Preferred: beat map — every detected beat, converted from the original
+    // to the time-stretched timeline (divide by ratio). Clicks land exactly on
+    // the music's beats, so they never drift over the course of a song.
+    let beatMap: number[] | null = null
+    let phase: number | null = null
+    if (item && srcBpm != null && srcBpm > 0) {
+      const ratio = targetBpm / srcBpm
+      const times = item.song.beat_times
+      if (times && times.length >= 2) {
+        beatMap = times.map((t) => t / ratio)
+      } else if (off != null) {
+        // Fallback: fixed grid anchored at the first-beat phase.
+        phase = ((off * srcBpm) / targetBpm) % (60 / targetBpm)
+      }
     }
+    m.setBeatMap(beatMap)
     m.setPhase(phase)
     m.setBpm(targetBpm)
     // Manual nudge: percent of a beat -> seconds, clamped to +/- half beat.

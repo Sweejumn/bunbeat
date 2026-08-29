@@ -21,6 +21,9 @@ export class Metronome {
   private phase = 0 // media-time seconds at which a beat occurs (grid anchor)
   private phaseKnown = false
   private phaseOffset = 0 // seconds; positive shifts clicks later (滞后)
+  private beatMap: number[] | null = null // media-time beat positions (processed timeline)
+  private mapIdx = 0
+  private extrapInterval = 60 / 120
   private enabled = false
   private vol = 0.5
   private audio: HTMLAudioElement
@@ -33,10 +36,25 @@ export class Metronome {
   setBpm(bpm: number): void {
     if (bpm === this.bpm) return
     this.bpm = bpm
+    this.extrapInterval = 60 / bpm
     if (this.enabled) this.restart()
   }
 
-  /** Anchor the beat grid: a beat occurs at `phaseSeconds`, then every 60/bpm. */
+  /**
+   * Beat map (media-time seconds, ascending): clicks land exactly on these
+   * positions, so they follow the music's real beats and never drift. When
+   * the map runs out, clicks extrapolate with the map's last interval.
+   */
+  setBeatMap(beatTimes: number[] | null | undefined): void {
+    const map = beatTimes && beatTimes.length >= 2 ? [...beatTimes].sort((a, b) => a - b) : null
+    if (map && map.length >= 2) {
+      this.extrapInterval = Math.max(0.05, map[map.length - 1] - map[map.length - 2])
+    }
+    this.beatMap = map
+    if (this.enabled) this.restart()
+  }
+
+  /** Anchor the beat grid (fallback when no beat map): a beat at `phaseSeconds`, then every 60/bpm. */
   setPhase(phaseSeconds: number | null | undefined): void {
     const known = phaseSeconds != null && Number.isFinite(phaseSeconds) && phaseSeconds >= 0
     this.phase = known ? phaseSeconds : 0
@@ -104,10 +122,25 @@ export class Metronome {
   private restart(): void {
     this.stopScheduler()
     if (!this.enabled || !this.ctx) return
-    const interval = 60 / this.bpm
     const now = this.audio.currentTime + 0.03 // small lead against clock read
-    if (this.phaseKnown) {
-      // Next grid beat at or after `now`: (phase + offset) + k*interval.
+    if (this.beatMap) {
+      // First map beat (nudged) at or after `now`; past the end, extrapolate.
+      let i = 0
+      while (i < this.beatMap.length && this.beatMap[i] + this.phaseOffset < now - 1e-9) i++
+      this.mapIdx = i
+      if (i < this.beatMap.length) {
+        this.nextTime = this.beatMap[i] + this.phaseOffset
+      } else {
+        const last = this.beatMap[this.beatMap.length - 1] + this.phaseOffset
+        const prev = this.beatMap[this.beatMap.length - 2] + this.phaseOffset
+        this.extrapInterval = Math.max(0.05, last - prev)
+        this.mapIdx = this.beatMap.length
+        this.nextTime = last + this.extrapInterval
+        while (this.nextTime < now) this.nextTime += this.extrapInterval
+      }
+    } else if (this.phaseKnown) {
+      // Fixed-grid fallback: (phase + offset) + k*interval.
+      const interval = 60 / this.bpm
       const anchor = this.phase + this.phaseOffset
       const k = Math.max(0, Math.ceil((now - anchor) / interval - 1e-9))
       this.nextTime = anchor + k * interval
@@ -145,11 +178,26 @@ export class Metronome {
     // scheduling clicks at the same timestamp.
     if (this.audio.paused) return
     const lookahead = 0.25
-    const interval = 60 / this.bpm
     const horizon = this.audio.currentTime + lookahead
     while (this.nextTime < horizon) {
       this.scheduleClick(this.nextTime)
-      this.nextTime += interval
+      if (this.beatMap) {
+        if (this.mapIdx < this.beatMap.length - 1) {
+          this.mapIdx++
+          this.nextTime = this.beatMap[this.mapIdx] + this.phaseOffset
+        } else if (this.mapIdx === this.beatMap.length - 1) {
+          // last map beat scheduled -> extrapolate with the map's interval
+          const last = this.beatMap[this.beatMap.length - 1] + this.phaseOffset
+          const prev = this.beatMap[this.beatMap.length - 2] + this.phaseOffset
+          this.extrapInterval = Math.max(0.05, last - prev)
+          this.mapIdx = this.beatMap.length
+          this.nextTime += this.extrapInterval
+        } else {
+          this.nextTime += this.extrapInterval
+        }
+      } else {
+        this.nextTime += 60 / this.bpm
+      }
     }
   }
 

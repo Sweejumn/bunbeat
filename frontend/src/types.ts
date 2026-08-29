@@ -12,6 +12,8 @@ export interface Song {
   bpm_error: string | null
   /** seconds of the first detected beat in the original audio (phase anchor) */
   beat_offset: number | null
+  /** every detected beat, seconds in the original timeline (beat map) */
+  beat_times: number[] | null
   mime_type: string | null
   size: number
   created_at: string
