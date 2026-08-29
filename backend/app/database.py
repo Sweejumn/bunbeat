@@ -57,6 +57,8 @@ def init_db() -> None:
                 status      TEXT NOT NULL DEFAULT 'pending', -- pending|processing|done|failed
                 error       TEXT,
                 output_path TEXT,
+                processed_bpm REAL,
+                processed_beat_times TEXT,
                 created_at  TEXT NOT NULL,
                 updated_at  TEXT NOT NULL
             );
@@ -75,6 +77,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE songs ADD COLUMN beat_offset REAL")
     if "beat_times" not in cols:
         conn.execute("ALTER TABLE songs ADD COLUMN beat_times TEXT")
+    tcols = {row[1] for row in conn.execute("PRAGMA table_info(processing_tasks)")}
+    if "processed_bpm" not in tcols:
+        conn.execute("ALTER TABLE processing_tasks ADD COLUMN processed_bpm REAL")
+    if "processed_beat_times" not in tcols:
+        conn.execute("ALTER TABLE processing_tasks ADD COLUMN processed_beat_times TEXT")
 
 
 # --------------------------------------------------------------------------
@@ -171,7 +178,7 @@ def find_task(song_id: str, target_bpm: float) -> dict[str, Any] | None:
 
 
 def update_task(task_id: str, **fields: Any) -> dict[str, Any] | None:
-    allowed = {"status", "error", "output_path", "updated_at"}
+    allowed = {"status", "error", "output_path", "processed_bpm", "processed_beat_times", "updated_at"}
     cols = [k for k in fields if k in allowed]
     if not cols:
         return get_task(task_id)

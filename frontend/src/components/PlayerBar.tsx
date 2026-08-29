@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import type { PlaylistItem } from '../types'
 import { formatBpm, formatDuration } from '../lib/format'
 import { TempoArrow } from './TempoArrow'
@@ -12,6 +13,9 @@ interface Props {
   metronomeVolume: number
   /** manual phase fine-tune in percent of a beat (-50..50) */
   phaseNudge: number
+  /** optional scrolling beat ruler rendered inside the metronome settings */
+  visualizer: ReactNode
+  visOn: boolean
   onTogglePlay: () => void
   onPrev: () => void
   onNext: () => void
@@ -20,6 +24,7 @@ interface Props {
   onMetronome: (on: boolean) => void
   onMetronomeVolume: (v: number) => void
   onPhaseNudge: (pct: number) => void
+  onToggleVisualizer: () => void
 }
 
 export function PlayerBar(p: Props) {
@@ -167,8 +172,18 @@ export function PlayerBar(p: Props) {
                 </button>
               )}
             </span>
+            <button
+              onClick={p.onToggleVisualizer}
+              className={`rounded px-2 py-0.5 ${
+                p.visOn ? 'bg-run text-ink' : 'bg-line text-white/60 hover:text-white'
+              }`}
+              title="节拍可视化调试"
+            >
+              📊 节拍可视化
+            </button>
           </div>
         )}
+        {p.visualizer}
       </div>
     </div>
   )

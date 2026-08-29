@@ -80,6 +80,66 @@ def _refine_tempo(ac: np.ndarray, sr: int, base_tempo: float) -> float:
     return 60.0 / (max(idx, 1e-6) * HOP / sr)
 
 
+def _peak_pick(x: np.ndarray) -> np.ndarray:
+    """Local maxima of a 1-D signal with parabolic sub-sample refinement.
+
+    Returns peak positions as float frame indices.
+    """
+    if x.shape[0] < 3:
+        return np.array([], dtype=float)
+    mask = (x[1:-1] > x[:-2]) & (x[1:-1] >= x[2:])
+    idx = np.flatnonzero(mask) + 1
+    if idx.size == 0:
+        return np.array([], dtype=float)
+    y0, y1, y2 = x[idx - 1], x[idx], x[idx + 1]
+    denom = y0 - 2 * y1 + y2
+    safe = np.where(np.abs(denom) > 1e-12, denom, 1e-12)
+    delta = np.where(np.abs(denom) > 1e-12, 0.5 * (y0 - y2) / safe, 0.0)
+    return idx + np.clip(delta, -1.0, 1.0)
+
+
+def _snap_beats_to_onsets(
+    onset_env: np.ndarray, beat_frames: np.ndarray, sr: int, hop: int
+) -> np.ndarray:
+    """Snap each beat frame to the nearest onset-envelope peak.
+
+    The bpm-locked grid has two flaws: frame quantization (about half a frame
+    of jitter) and a biased period (the detected bpm can be a fraction of a
+    percent off, which accumulates into drift). The onset peaks are where the
+    audible beats actually are, so snapping pulls every click onto the real
+    transients — eliminating both jitter and cumulative drift (each beat is
+    found independently, never extrapolated).
+    """
+    peaks = _peak_pick(onset_env)
+    if peaks.size < 2 or beat_frames.size == 0:
+        return np.asarray(beat_frames, dtype=float)
+
+    frames = np.asarray(beat_frames, dtype=float)
+    if frames.size >= 2:
+        radius = 0.55 * float(np.median(np.diff(frames)))
+    else:
+        radius = 8.0
+    radius = max(radius, 3.0)
+
+    refined = np.empty_like(frames)
+    pi = 0
+    n = peaks.size
+    for i, bf in enumerate(frames):
+        while pi < n - 1 and peaks[pi] < bf - radius:
+            pi += 1
+        best, best_d = bf, radius + 1.0
+        j = pi
+        while j < n and peaks[j] <= bf + radius:
+            d = abs(peaks[j] - bf)
+            if d < best_d:
+                best_d = d
+                best = peaks[j]
+            j += 1
+        refined[i] = best
+        pi = max(pi, j - 1) if j > pi else pi
+    return refined
+
+
 def _octave_correct(ac: np.ndarray, sr: int, tempo: float) -> tuple[float, bool]:
     """Resolve tempo-ambiguity (2x / 0.5x octaves plus 1.5x / 2/3 pulses).
 
@@ -213,8 +273,9 @@ def analyze_bpm(path: Path) -> BpmResult:
     # can lock to a sub-multiple of the reported tempo (e.g. half-time), which
     # would make the metronome click at the wrong pulse level; re-running the
     # DP tracker with bpm fixed to the corrected value yields beats at the
-    # right density. The metronome clicks exactly on these positions, so it
-    # never drifts from the music over the course of a song.
+    # right density. Each grid beat is then SNAPPED to the nearest onset peak,
+    # so the map follows the real transients (no frame jitter, no cumulative
+    # drift) instead of a possibly-biased constant-period grid.
     beat_offset: float | None = None
     beat_times: list[float] | None = None
     try:
@@ -227,13 +288,13 @@ def analyze_bpm(path: Path) -> BpmResult:
             tightness=100,
             trim=True,
         )
-        frames = np.flatnonzero(mask)
+        frames = _snap_beats_to_onsets(onset_env, np.flatnonzero(mask), sr, HOP)
         if frames.size >= 2:
             beat_times = [round(float(f) * HOP / sr, 3) for f in frames]
             beat_offset = beat_times[0]
     except Exception:  # noqa: BLE001  (private API; fall back to free beats)
         if beats is not None and len(beats) >= 2:
-            beat_arr = np.asarray(beats, dtype=float)
+            beat_arr = _snap_beats_to_onsets(onset_env, np.asarray(beats, dtype=float), sr, HOP)
             beat_times = [round(float(f) * HOP / sr, 3) for f in beat_arr if np.isfinite(f)]
             beat_offset = beat_times[0]
 

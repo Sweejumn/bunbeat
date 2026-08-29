@@ -63,20 +63,34 @@ def ffmpeg_version() -> str:
 
 
 def probe_duration(path: Path) -> float | None:
-    """Duration in seconds via ffprobe-style `ffmpeg -i` parse."""
+    """Duration in seconds via ffprobe-style `ffmpeg -i` parse.
+
+    Note: stderr goes to a temp file (not a pipe) because piped stdio is
+    blocked in restricted sandboxes.
+    """
+    import tempfile
+
     cmd = [get_ffmpeg(), "-hide_banner", "-i", str(path)]
+    fd, tmp = tempfile.mkstemp(suffix=".log")
     try:
-        proc = subprocess.run(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=60
-        )
-        for line in (proc.stderr or "").splitlines():
-            if "Duration:" in line and "time=" in line:
+        with os.fdopen(fd, "w", encoding="utf-8", errors="replace") as f:
+            proc = subprocess.run(
+                cmd, stdout=subprocess.DEVNULL, stderr=f, timeout=60
+            )
+        text = Path(tmp).read_text(encoding="utf-8", errors="replace")
+        for line in text.splitlines():
+            if "Duration:" in line:
                 token = line.split("Duration:")[1].split(",")[0].strip()
                 parts = token.split(":")
                 if len(parts) == 3:
                     return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
     except Exception as exc:
         logger.warning("probe_duration failed for %s: %s", path, exc)
+    finally:
+        try:
+            Path(tmp).unlink(missing_ok=True)
+        except OSError:
+            pass
     return None
 
 

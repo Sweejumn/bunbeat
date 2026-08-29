@@ -28,9 +28,16 @@ export class Metronome {
   private vol = 0.5
   private audio: HTMLAudioElement
   private sources = new Set<{ osc: OscillatorNode; gain: GainNode }>()
+  private clickListeners = new Set<(mediaTime: number) => void>()
 
   constructor(audio: HTMLAudioElement) {
     this.audio = audio
+  }
+
+  /** Subscribe to scheduled click times (media timeline). Returns unsubscribe. */
+  onClick(listener: (mediaTime: number) => void): () => void {
+    this.clickListeners.add(listener)
+    return () => this.clickListeners.delete(listener)
   }
 
   setBpm(bpm: number): void {
@@ -228,5 +235,6 @@ export class Metronome {
     }
     osc.start(when)
     osc.stop(when + 0.08)
+    for (const fn of this.clickListeners) fn(mediaTime)
   }
 }

@@ -99,7 +99,24 @@ async def run_processing(task_id: str) -> None:
     logger.info("processing %s -> %s BPM", song["filename"], task["target_bpm"])
     try:
         out = await asyncio.to_thread(stretch_to_bpm, song, task["target_bpm"])
-        database.update_task(task_id, status="done", error=None, output_path=str(out))
+        # Analyse the STRETCHED file itself: its own beat map is the ground
+        # truth of what will actually play, so the metronome can click on the
+        # real beats (captures atempo's tiny ratio error too).
+        try:
+            result = await asyncio.to_thread(analyze_bpm, out)
+            processed_bpm = result.bpm if result.bpm else None
+            processed_beats = json.dumps(result.beat_times) if result.beat_times else None
+        except Exception:  # noqa: BLE001
+            logger.warning("post-process beat analysis failed for %s", song["filename"])
+            processed_bpm, processed_beats = None, None
+        database.update_task(
+            task_id,
+            status="done",
+            error=None,
+            output_path=str(out),
+            processed_bpm=processed_bpm,
+            processed_beat_times=processed_beats,
+        )
         logger.info("processed %s -> %s", song["filename"], out)
     except Exception as exc:  # noqa: BLE001
         logger.exception("processing failed for %s", song["filename"])

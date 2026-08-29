@@ -71,6 +71,18 @@ class ProcessTaskOut(BaseModel):
     created_at: str
     updated_at: str
     processed_url: Optional[str] = None
+    processed_bpm: Optional[float] = None
+    processed_beat_times: Optional[list[float]] = None
+
+    @field_validator("processed_beat_times", mode="before")
+    @classmethod
+    def _parse_beats(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except ValueError:
+                return None
+        return v
 
 
 class ProcessBatchRequest(BaseModel):

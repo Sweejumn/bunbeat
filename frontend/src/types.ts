@@ -34,6 +34,9 @@ export interface ProcessTask {
   created_at: string
   updated_at: string
   processed_url: string | null
+  processed_bpm: number | null
+  /** every beat of the STRETCHED file (seconds in processed timeline) */
+  processed_beat_times: number[] | null
 }
 
 export interface Health {
@@ -66,4 +69,6 @@ export interface PlaylistItem {
   song: Song
   url: string
   targetBpm: number
+  /** ground-truth beats of the stretched file, if analysis succeeded */
+  processedBeatTimes: number[] | null
 }

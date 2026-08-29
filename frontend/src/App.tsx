@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from './api'
+import { BeatVisualizer } from './components/BeatVisualizer'
 import { ModePicker } from './components/ModePicker'
 import { PlayerBar } from './components/PlayerBar'
 import { RecommendPanel } from './components/RecommendPanel'
@@ -47,6 +48,8 @@ export default function App() {
   const audioRef = useRef<HTMLAudioElement>(null)
   const metronomeRef = useRef<Metronome | null>(null)
   const pollTimer = useRef<number | null>(null)
+  const clicksRef = useRef<number[]>([])
+  const [visOn, setVisOn] = useState(false)
 
   const showToast = useCallback((msg: string, kind: 'error' | 'ok' = 'ok') => {
     setToast({ msg, kind })
@@ -183,7 +186,12 @@ export default function App() {
           .map((t) => {
             const song = songById.get(t.song_id)
             if (!song) return null
-            return { song, targetBpm, url: api.processedUrl(t.song_id, targetBpm) }
+            return {
+              song,
+              targetBpm,
+              url: api.processedUrl(t.song_id, targetBpm),
+              processedBeatTimes: t.processed_beat_times ?? null,
+            }
           })
           .filter((x): x is PlaylistItem => x != null)
 
@@ -266,19 +274,23 @@ export default function App() {
     const item = currentIndex >= 0 ? playlist[currentIndex] : null
     const off = item?.song.beat_offset
     const srcBpm = item?.song.original_bpm
-    // Preferred: beat map — every detected beat, converted from the original
-    // to the time-stretched timeline (divide by ratio). Clicks land exactly on
-    // the music's beats, so they never drift over the course of a song.
+    // Click source priority: (1) the stretched file's OWN detected beats —
+    // ground truth of what actually plays, captures atempo's tiny ratio
+    // error too; (2) the original beat map converted to the stretched
+    // timeline; (3) fixed grid anchored at the first-beat phase.
     let beatMap: number[] | null = null
     let phase: number | null = null
     if (item && srcBpm != null && srcBpm > 0) {
-      const ratio = targetBpm / srcBpm
-      const times = item.song.beat_times
-      if (times && times.length >= 2) {
-        beatMap = times.map((t) => t / ratio)
-      } else if (off != null) {
-        // Fallback: fixed grid anchored at the first-beat phase.
-        phase = ((off * srcBpm) / targetBpm) % (60 / targetBpm)
+      const processed = item.processedBeatTimes
+      if (processed && processed.length >= 2) {
+        beatMap = processed
+      } else {
+        const times = item.song.beat_times
+        if (times && times.length >= 2) {
+          beatMap = times.map((t) => t / (targetBpm / srcBpm))
+        } else if (off != null) {
+          phase = ((off * srcBpm) / targetBpm) % (60 / targetBpm)
+        }
       }
     }
     m.setBeatMap(beatMap)
@@ -288,6 +300,9 @@ export default function App() {
     m.setPhaseOffset((Math.max(-50, Math.min(50, phaseNudge)) / 100) * (60 / targetBpm))
     m.setVolume(metronomeVolume)
     m.setEnabled(metronomeOn)
+    // Record scheduled clicks for the visualizer; clear on song change.
+    const unsub = m.onClick((t) => clicksRef.current.push(t))
+    return () => unsub()
   }, [targetBpm, metronomeVolume, metronomeOn, phaseNudge, currentIndex, playlist])
 
   useEffect(() => {
@@ -375,35 +390,63 @@ export default function App() {
         </footer>
       </main>
 
-      <PlayerBar
-        item={currentIndex >= 0 ? playlist[currentIndex] : null}
-        playing={playing}
-        currentTime={currentTime}
-        duration={duration}
-        volume={volume}
-        metronomeOn={metronomeOn}
-        metronomeVolume={metronomeVolume}
-        onTogglePlay={() => {
-          const audio = audioRef.current
-          if (!audio) return
-          if (audio.paused) void audio.play()
-          else audio.pause()
-        }}
-        onPrev={() => setCurrentIndex((i) => (i - 1 + playlist.length) % playlist.length)}
-        onNext={() => setCurrentIndex((i) => (i + 1) % playlist.length)}
-        onSeek={(t) => {
-          const audio = audioRef.current
-          if (audio) audio.currentTime = t
-        }}
-        onVolume={(v) => setVolume(v)}
-        onMetronome={setMetronomeOn}
-        onMetronomeVolume={setMetronomeVolume}
-        phaseNudge={phaseNudge}
-        onPhaseNudge={(v) => {
-          setPhaseNudge(v)
-          localStorage.setItem('runbpm.phaseNudge', String(v))
-        }}
-      />
+      {(() => {
+        const item = currentIndex >= 0 ? playlist[currentIndex] : null
+        const predicted: number[] = []
+        const actual: number[] = []
+        if (item && item.song.original_bpm && item.song.original_bpm > 0) {
+          const ratio = targetBpm / item.song.original_bpm
+          predicted.push(...(item.song.beat_times ?? []).map((t) => t / ratio))
+          actual.push(
+            ...(item.processedBeatTimes && item.processedBeatTimes.length >= 2
+              ? item.processedBeatTimes
+              : predicted),
+          )
+        }
+        return (
+          <PlayerBar
+            item={item}
+            playing={playing}
+            currentTime={currentTime}
+            duration={duration}
+            volume={volume}
+            metronomeOn={metronomeOn}
+            metronomeVolume={metronomeVolume}
+            phaseNudge={phaseNudge}
+            visualizer={
+              visOn && item ? (
+                <BeatVisualizer
+                  predicted={predicted}
+                  actual={actual}
+                  getCurrentTime={() => audioRef.current?.currentTime ?? 0}
+                  clicksRef={clicksRef}
+                />
+              ) : null
+            }
+            visOn={visOn}
+            onToggleVisualizer={() => setVisOn((v) => !v)}
+            onTogglePlay={() => {
+              const audio = audioRef.current
+              if (!audio) return
+              if (audio.paused) void audio.play()
+              else audio.pause()
+            }}
+            onPrev={() => setCurrentIndex((i) => (i - 1 + playlist.length) % playlist.length)}
+            onNext={() => setCurrentIndex((i) => (i + 1) % playlist.length)}
+            onSeek={(t) => {
+              const audio = audioRef.current
+              if (audio) audio.currentTime = t
+            }}
+            onVolume={(v) => setVolume(v)}
+            onMetronome={setMetronomeOn}
+            onMetronomeVolume={setMetronomeVolume}
+            onPhaseNudge={(v) => {
+              setPhaseNudge(v)
+              localStorage.setItem('runbpm.phaseNudge', String(v))
+            }}
+          />
+        )
+      })()}
 
       {/* toast */}
       {toast && (
