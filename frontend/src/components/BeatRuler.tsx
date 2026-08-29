@@ -52,8 +52,8 @@ export function BeatRuler({ beats, getCurrentTime, taps = [] }: Props) {
           {taps.map((t, i) => (
             <div
               key={`tap-${i}`}
-              className="absolute inset-y-0 w-[5px] rounded-sm bg-accent shadow-[0_0_6px_rgba(251,191,36,0.9)]"
-              style={{ left: t * PX - 2.5 }}
+              className="absolute inset-y-1 w-[3px] rounded bg-accent"
+              style={{ left: t * PX - 1.5 }}
               title={`打拍 ${i + 1}: ${t.toFixed(3)}s`}
             />
           ))}

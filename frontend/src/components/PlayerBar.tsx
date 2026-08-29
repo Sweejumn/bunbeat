@@ -43,11 +43,11 @@ interface Props {
 function TapTempo({
   onCalibrate,
   getCurrentTime,
-  onTaps,
+  onTap,
 }: {
   onCalibrate: (bpm: number | null, firstBeat: number | null) => void
   getCurrentTime: () => number
-  onTaps: (taps: number[]) => void
+  onTap: (t: number) => void
 }) {
   // Tapping always computes BPM; it is applied to the calibration only
   // while the "设首拍" switch is on (default off) — otherwise the result
@@ -60,10 +60,9 @@ function TapTempo({
   const handleTap = () => {
     const t = getCurrentTime()
     const now = performance.now()
-    const next = now - lastTapRef.current > 2000 ? [t] : [...taps, t]
+    setTaps((prev) => (now - lastTapRef.current > 2000 ? [t] : [...prev, t]))
     lastTapRef.current = now
-    setTaps(next)
-    onTaps(next)
+    onTap(t)
   }
 
   useEffect(() => {
@@ -82,7 +81,7 @@ function TapTempo({
       }
     }
     setTaps([])
-  }, [taps, onCalibrate, onTaps, setFirstBeat])
+  }, [taps, onCalibrate, setFirstBeat])
 
   return (
     <span className="flex items-center gap-1">
@@ -324,7 +323,13 @@ export function PlayerBar(p: Props) {
           <TapTempo
             onCalibrate={p.onSetCal}
             getCurrentTime={p.getCurrentTime}
-            onTaps={setTapMarks}
+            onTap={(t) =>
+              setTapMarks((prev) => {
+                const next = [...prev, t]
+                // Keep only the most recent 10 marks on the ruler.
+                return next.length > 10 ? next.slice(next.length - 10) : next
+              })
+            }
           />
           {tapMarks.length > 0 && (
             <button
