@@ -223,6 +223,7 @@ export default function App() {
     const onDur = () => setDuration(audio.duration || 0)
     const onPlay = () => setPlaying(true)
     const onPause = () => setPlaying(false)
+    const onSeeked = () => metronomeRef.current?.onSeek()
     const onEnded = () => {
       if (currentIndex < playlist.length - 1) setCurrentIndex((i) => i + 1)
       else setCurrentIndex(0)
@@ -231,6 +232,7 @@ export default function App() {
     audio.addEventListener('loadedmetadata', onDur)
     audio.addEventListener('play', onPlay)
     audio.addEventListener('pause', onPause)
+    audio.addEventListener('seeked', onSeeked)
     audio.addEventListener('ended', onEnded)
     audio.volume = volume
     return () => {
@@ -238,6 +240,7 @@ export default function App() {
       audio.removeEventListener('loadedmetadata', onDur)
       audio.removeEventListener('play', onPlay)
       audio.removeEventListener('pause', onPause)
+      audio.removeEventListener('seeked', onSeeked)
       audio.removeEventListener('ended', onEnded)
     }
   }, [currentIndex, playlist.length, volume])

@@ -1,22 +1,29 @@
 /**
  * Browser-side metronome using the Web Audio API.
  *
- * Clicks are scheduled ahead of time (lookahead scheduler) and aligned to
- * the <audio> element's currentTime. A beat phase can be supplied so clicks
- * land ON the music's actual beats (see `setPhase`): with a known phase the
- * scheduler snaps to the grid  phase + k * (60/bpm), otherwise it free-runs
- * from the current playback position.
+ * Alignment model:
+ *  - Beats live on the MEDIA timeline: a beat occurs at `phase`, then every
+ *    60/bpm seconds (phase is the first-beat position of the time-stretched
+ *    audio, derived from the BPM analysis' beat offset).
+ *  - A lookahead scheduler (25ms tick, 250ms horizon) converts media time to
+ *    the AudioContext clock at scheduling time:
+ *        ctxTime = ctx.currentTime + (mediaTime - audio.currentTime)
+ *    so clicks land on the music's beats regardless of when the context was
+ *    created or where playback currently is (seek, song change, pause).
+ *  - Every scheduled click is tracked so disabling/pausing cancels pending
+ *    clicks instantly (no "ghost" clicks).
  */
 export class Metronome {
   private ctx: AudioContext | null = null
   private timer: number | null = null
   private nextTime = 0
   private bpm = 120
-  private phase = 0 // seconds at which a beat occurs (grid anchor)
+  private phase = 0 // media-time seconds at which a beat occurs (grid anchor)
   private phaseKnown = false
   private enabled = false
   private vol = 0.5
   private audio: HTMLAudioElement
+  private sources = new Set<{ osc: OscillatorNode; gain: GainNode }>()
 
   constructor(audio: HTMLAudioElement) {
     this.audio = audio
@@ -87,7 +94,7 @@ export class Metronome {
     this.stopScheduler()
     if (!this.enabled || !this.ctx) return
     const interval = 60 / this.bpm
-    const now = this.audio.currentTime + 0.05
+    const now = this.audio.currentTime + 0.03 // small lead against clock read
     if (this.phaseKnown) {
       // Next grid beat at or after `now`: phase + k*interval.
       const k = Math.max(0, Math.ceil((now - this.phase) / interval - 1e-9))
@@ -104,6 +111,20 @@ export class Metronome {
       window.clearInterval(this.timer)
       this.timer = null
     }
+    // Cancel pending clicks so turning off / pausing is instant.
+    for (const { osc, gain } of this.sources) {
+      try {
+        osc.stop()
+      } catch {
+        /* already stopped */
+      }
+      try {
+        gain.disconnect()
+      } catch {
+        /* already disconnected */
+      }
+    }
+    this.sources.clear()
   }
 
   private tick = (): void => {
@@ -111,25 +132,41 @@ export class Metronome {
     // While the music is paused, currentTime is frozen: don't keep
     // scheduling clicks at the same timestamp.
     if (this.audio.paused) return
-    const lookahead = 0.15
+    const lookahead = 0.25
     const interval = 60 / this.bpm
-    while (this.nextTime < this.audio.currentTime + lookahead) {
+    const horizon = this.audio.currentTime + lookahead
+    while (this.nextTime < horizon) {
       this.scheduleClick(this.nextTime)
       this.nextTime += interval
     }
   }
 
-  private scheduleClick(time: number): void {
+  private scheduleClick(mediaTime: number): void {
     if (!this.ctx) return
+    // Convert media-timeline time to the AudioContext clock, re-anchored at
+    // scheduling time so it stays correct across seeks and song changes.
+    const when = this.ctx.currentTime + (mediaTime - this.audio.currentTime)
+    if (when <= this.ctx.currentTime + 0.002) return // skip past/present clicks
+
     const osc = this.ctx.createOscillator()
     const gain = this.ctx.createGain()
     osc.type = 'square'
     osc.frequency.value = 1174 // D6
-    gain.gain.setValueAtTime(this.vol * 0.32, time)
-    gain.gain.exponentialRampToValueAtTime(0.0008, time + 0.06)
+    gain.gain.setValueAtTime(this.vol * 0.32, when)
+    gain.gain.exponentialRampToValueAtTime(0.0008, when + 0.06)
     osc.connect(gain)
     gain.connect(this.ctx.destination)
-    osc.start(time)
-    osc.stop(time + 0.08)
+    const entry = { osc, gain }
+    this.sources.add(entry)
+    osc.onended = () => {
+      this.sources.delete(entry)
+      try {
+        gain.disconnect()
+      } catch {
+        /* noop */
+      }
+    }
+    osc.start(when)
+    osc.stop(when + 0.08)
   }
 }
