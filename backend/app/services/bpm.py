@@ -40,7 +40,8 @@ class BpmResult:
     error: str | None = None
     octave_corrected: bool = False
     beat_offset: float | None = None  # seconds of the first detected beat (original timeline)
-    beat_times: list[float] | None = None  # every detected beat, seconds (original timeline)
+    beat_times: list[float] | None = None  # default beat map = "grid" mode
+    beat_maps: dict[str, list[float]] | None = None  # all selectable modes
 
 
 def _onset_ac(onset_env: np.ndarray) -> np.ndarray:
@@ -98,46 +99,111 @@ def _peak_pick(x: np.ndarray) -> np.ndarray:
     return idx + np.clip(delta, -1.0, 1.0)
 
 
-def _snap_beats_to_onsets(
-    onset_env: np.ndarray, beat_frames: np.ndarray, sr: int, hop: int
-) -> np.ndarray:
-    """Snap each beat frame to the nearest onset-envelope peak.
+def _strongest_onset(onset_env: np.ndarray, center: float, win: float) -> float:
+    """Frame of the strongest onset energy within [center-win, center+win].
 
-    The bpm-locked grid has two flaws: frame quantization (about half a frame
-    of jitter) and a biased period (the detected bpm can be a fraction of a
-    percent off, which accumulates into drift). The onset peaks are where the
-    audible beats actually are, so snapping pulls every click onto the real
-    transients — eliminating both jitter and cumulative drift (each beat is
-    found independently, never extrapolated).
+    Unlike picking the *nearest* local maximum (which grabs envelope ripples
+    around a drum hit), this returns the dominant transient — the actual beat
+    — with parabolic sub-frame refinement.
     """
-    peaks = _peak_pick(onset_env)
-    if peaks.size < 2 or beat_frames.size == 0:
-        return np.asarray(beat_frames, dtype=float)
+    lo = max(0, int(np.floor(center - win)))
+    hi = min(onset_env.shape[0] - 1, int(np.ceil(center + win)))
+    if hi <= lo:
+        return float(center)
+    seg = onset_env[lo : hi + 1]
+    m = int(np.argmax(seg)) + lo
+    if 1 <= m < onset_env.shape[0] - 1:
+        y0, y1, y2 = onset_env[m - 1], onset_env[m], onset_env[m + 1]
+        denom = y0 - 2 * y1 + y2
+        if abs(denom) > 1e-12:
+            delta = 0.5 * (y0 - y2) / denom
+            m = m + float(np.clip(delta, -1.0, 1.0))
+    return float(m)
 
-    frames = np.asarray(beat_frames, dtype=float)
-    if frames.size >= 2:
-        radius = 0.55 * float(np.median(np.diff(frames)))
-    else:
-        radius = 8.0
-    radius = max(radius, 3.0)
 
-    refined = np.empty_like(frames)
-    pi = 0
-    n = peaks.size
-    for i, bf in enumerate(frames):
-        while pi < n - 1 and peaks[pi] < bf - radius:
-            pi += 1
-        best, best_d = bf, radius + 1.0
-        j = pi
-        while j < n and peaks[j] <= bf + radius:
-            d = abs(peaks[j] - bf)
-            if d < best_d:
-                best_d = d
-                best = peaks[j]
-            j += 1
-        refined[i] = best
-        pi = max(pi, j - 1) if j > pi else pi
-    return refined
+def _beat_grid(onset_env: np.ndarray, frames: np.ndarray) -> tuple[np.ndarray, float, float]:
+    """Shared grid computation for all beat-map modes.
+
+    Returns (grid, P, phi) in FRAME units, where:
+      grid  regular beat grid        phi + k*P
+      P     robust beat period       median of dominant-onset spacings
+      phi   onset-anchored phase     median(nearest - k*P)
+    """
+    f = np.asarray(frames, dtype=float)
+    diffs = np.diff(f)
+    P0 = float(np.median(diffs)) if diffs.size else 0.0
+    if not (P0 > 2.0):
+        raise ValueError("beat frames too sparse")
+
+    k_idx = np.arange(f.size)
+    nearest = np.array([_strongest_onset(onset_env, fr, 0.45 * P0) for fr in f])
+
+    # Refine the period from the onset spacings: tracker frames are quantized
+    # to whole frames (e.g. 22 vs the true 21.53), which would bias the phase
+    # fit; the onset spacings give the true period. Outliers dropped.
+    P = P0
+    if nearest.size >= 3:
+        nd = np.diff(nearest)
+        ndm = float(np.median(nd))
+        if ndm > 2:
+            kept = nd[np.abs(nd - ndm) <= 0.15 * ndm]
+            if kept.size >= 2:
+                P = float(np.median(kept))
+    if not (P > 2.0):
+        P = P0
+
+    phi = float(np.median(nearest - k_idx * P))
+    start_k = int(np.floor((f[0] - phi) / P))
+    end_k = int(np.ceil((f[-1] - phi) / P))
+    kk = np.arange(start_k, end_k + 1)
+    return phi + kk * P, P, phi
+
+
+def _beat_map_variants(
+    onset_env: np.ndarray, frames: np.ndarray, sr: int, hop: int
+) -> dict[str, list[float]]:
+    """Produce the three selectable beat-map modes (seconds, original timeline).
+
+      grid  固定拍子 (default): perfectly regular grid — the music's true
+            median beat period (no drift) + onset-anchored phase, no per-beat
+            snapping, so beats are exactly evenly spaced.
+      light 轻跟随: grid pulled up to +-5% of a beat toward the dominant
+            onset — follows local tempo lightly while staying mostly regular.
+      snap  跟随起音: each beat follows the dominant onset within +-12% of a
+            beat (with interval validation) — tracks the music's transients,
+            at the cost of regularity on songs with loose/syncopated drums.
+    """
+    grid, P, _ = _beat_grid(onset_env, frames)
+    variants: dict[str, list[float]] = {
+        "grid": [round(float(t) * hop / sr, 3) for t in grid]
+    }
+    if onset_env.size <= 0:
+        return variants
+
+    light = np.array([_strongest_onset(onset_env, g, 0.05 * P) for g in grid])
+    variants["light"] = [round(float(t) * hop / sr, 3) for t in light]
+
+    snap = np.array([_strongest_onset(onset_env, g, 0.12 * P) for g in grid])
+    # validation: re-grid beats creating irregular intervals
+    for _ in range(4):
+        iv = np.diff(snap)
+        bad = np.flatnonzero((iv < 0.85 * P) | (iv > 1.15 * P))
+        if bad.size == 0:
+            break
+        fix: set[int] = set()
+        for b in bad:
+            fix.add(int(b))
+            fix.add(int(b) + 1)
+        changed = False
+        for b in sorted(fix):
+            if 0 <= b < snap.size and snap[b] != grid[b]:
+                snap[b] = grid[b]
+                changed = True
+        if not changed:
+            snap = grid.copy()
+            break
+    variants["snap"] = [round(float(t) * hop / sr, 3) for t in snap]
+    return variants
 
 
 def _octave_correct(ac: np.ndarray, sr: int, tempo: float) -> tuple[float, bool]:
@@ -269,15 +335,13 @@ def analyze_bpm(path: Path) -> BpmResult:
             cv = std_iv / mean_iv  # coefficient of variation
             confidence = float(np.clip(1.0 - cv * 3.0, 0.0, 1.0))
 
-    # Beat map locked to the CORRECTED tempo pulse. The free-running tracker
-    # can lock to a sub-multiple of the reported tempo (e.g. half-time), which
-    # would make the metronome click at the wrong pulse level; re-running the
-    # DP tracker with bpm fixed to the corrected value yields beats at the
-    # right density. Each grid beat is then SNAPPED to the nearest onset peak,
-    # so the map follows the real transients (no frame jitter, no cumulative
-    # drift) instead of a possibly-biased constant-period grid.
+    # Beat maps locked to the CORRECTED tempo pulse. The free-running tracker
+    # can lock to a sub-multiple of the reported tempo (e.g. half-time), so we
+    # re-run the DP tracker with bpm fixed to the corrected value, then derive
+    # the three selectable beat-map modes (fixed grid / light / onset-snapped).
     beat_offset: float | None = None
     beat_times: list[float] | None = None
+    beat_maps: dict[str, list[float]] | None = None
     try:
         from librosa.beat import __beat_tracker
 
@@ -288,15 +352,16 @@ def analyze_bpm(path: Path) -> BpmResult:
             tightness=100,
             trim=True,
         )
-        frames = _snap_beats_to_onsets(onset_env, np.flatnonzero(mask), sr, HOP)
-        if frames.size >= 2:
-            beat_times = [round(float(f) * HOP / sr, 3) for f in frames]
-            beat_offset = beat_times[0]
+        beat_maps = _beat_map_variants(onset_env, np.flatnonzero(mask), sr, HOP)
     except Exception:  # noqa: BLE001  (private API; fall back to free beats)
         if beats is not None and len(beats) >= 2:
-            beat_arr = _snap_beats_to_onsets(onset_env, np.asarray(beats, dtype=float), sr, HOP)
-            beat_times = [round(float(f) * HOP / sr, 3) for f in beat_arr if np.isfinite(f)]
-            beat_offset = beat_times[0]
+            try:
+                beat_maps = _beat_map_variants(onset_env, np.asarray(beats, dtype=float), sr, HOP)
+            except Exception:  # noqa: BLE001
+                beat_maps = None
+    if beat_maps and beat_maps.get("grid"):
+        beat_times = beat_maps["grid"]
+        beat_offset = beat_times[0]
 
     duration = None
     try:
@@ -307,5 +372,5 @@ def analyze_bpm(path: Path) -> BpmResult:
     return BpmResult(
         bpm=bpm, confidence=confidence, duration=duration,
         octave_corrected=octave_corrected, beat_offset=beat_offset,
-        beat_times=beat_times,
+        beat_times=beat_times, beat_maps=beat_maps,
     )

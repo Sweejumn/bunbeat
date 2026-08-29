@@ -12,8 +12,10 @@ export interface Song {
   bpm_error: string | null
   /** seconds of the first detected beat in the original audio (phase anchor) */
   beat_offset: number | null
-  /** every detected beat, seconds in the original timeline (beat map) */
+  /** default beat map (fixed grid), seconds in the original timeline */
   beat_times: number[] | null
+  /** alternate beat maps per mode (light / snap), original timeline */
+  beat_maps: Record<BeatMode, number[]> | null
   mime_type: string | null
   size: number
   created_at: string
@@ -35,9 +37,20 @@ export interface ProcessTask {
   updated_at: string
   processed_url: string | null
   processed_bpm: number | null
-  /** every beat of the STRETCHED file (seconds in processed timeline) */
+  /** default beat map (fixed grid) of the stretched file */
   processed_beat_times: number[] | null
+  /** alternate beat maps per mode of the stretched file */
+  processed_beat_maps: Record<BeatMode, number[]> | null
 }
+
+/** selectable beat-map modes (backend computes all three at analysis time) */
+export type BeatMode = 'grid' | 'light' | 'snap'
+
+export const BEAT_MODES: { id: BeatMode; label: string; desc: string }[] = [
+  { id: 'grid', label: '固定拍子', desc: '完全等距 · 默认推荐' },
+  { id: 'light', label: '轻跟随', desc: '±5% 跟随起音' },
+  { id: 'snap', label: '跟随起音', desc: '±12% 吸附打击点' },
+]
 
 export interface Health {
   status: string
@@ -69,6 +82,8 @@ export interface PlaylistItem {
   song: Song
   url: string
   targetBpm: number
-  /** ground-truth beats of the stretched file, if analysis succeeded */
+  /** ground-truth beats of the stretched file (fixed grid), if available */
   processedBeatTimes: number[] | null
+  /** alternate beat maps of the stretched file, per mode */
+  processedBeatMaps: Record<BeatMode, number[]> | null
 }

@@ -21,13 +21,14 @@ class SongOut(BaseModel):
     bpm_error: Optional[str] = None
     beat_offset: Optional[float] = None
     beat_times: Optional[list[float]] = None
+    beat_maps: Optional[dict[str, list[float]]] = None
     mime_type: Optional[str] = None
     size: int
     created_at: str
 
-    @field_validator("beat_times", mode="before")
+    @field_validator("beat_times", "beat_maps", mode="before")
     @classmethod
-    def _parse_beat_times(cls, v: Any) -> Any:
+    def _parse_json(cls, v: Any) -> Any:
         if isinstance(v, str):
             try:
                 return json.loads(v)
@@ -73,8 +74,9 @@ class ProcessTaskOut(BaseModel):
     processed_url: Optional[str] = None
     processed_bpm: Optional[float] = None
     processed_beat_times: Optional[list[float]] = None
+    processed_beat_maps: Optional[dict[str, list[float]]] = None
 
-    @field_validator("processed_beat_times", mode="before")
+    @field_validator("processed_beat_times", "processed_beat_maps", mode="before")
     @classmethod
     def _parse_beats(cls, v: Any) -> Any:
         if isinstance(v, str):

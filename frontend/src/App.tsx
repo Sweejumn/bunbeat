@@ -8,8 +8,8 @@ import { SongTable } from './components/SongTable'
 import { UploadZone } from './components/UploadZone'
 import { Metronome } from './lib/metronome'
 import { startDiagnostics } from './lib/monitor'
-import type { ModeId, PlaylistItem, ProcessTask, Recommendation, Song } from './types'
-import { MODES } from './types'
+import type { BeatMode, ModeId, PlaylistItem, ProcessTask, Recommendation, Song } from './types'
+import { BEAT_MODES, MODES } from './types'
 
 interface Toast {
   msg: string
@@ -51,6 +51,11 @@ export default function App() {
   const pollTimer = useRef<number | null>(null)
   const clicksRef = useRef<number[]>([])
   const [visOn, setVisOn] = useState(false)
+  // Selectable beat-map mode (固定拍子 default, persisted).
+  const [beatMode, setBeatMode] = useState<BeatMode>(() => {
+    const v = localStorage.getItem('runbpm.beatMode') ?? 'grid'
+    return BEAT_MODES.some((m) => m.id === v) ? (v as BeatMode) : 'grid'
+  })
 
   // Stable accessors (identity must not change per render — otherwise the
   // visualizer's rAF/timer effects would tear down and restart constantly).
@@ -207,6 +212,7 @@ export default function App() {
               targetBpm,
               url: api.processedUrl(t.song_id, targetBpm),
               processedBeatTimes: t.processed_beat_times ?? null,
+              processedBeatMaps: t.processed_beat_maps ?? null,
             }
           })
           .filter((x): x is PlaylistItem => x != null)
@@ -290,20 +296,23 @@ export default function App() {
     const item = currentIndex >= 0 ? playlist[currentIndex] : null
     const off = item?.song.beat_offset
     const srcBpm = item?.song.original_bpm
-    // Click source priority: (1) the stretched file's OWN detected beats —
-    // ground truth of what actually plays, captures atempo's tiny ratio
-    // error too; (2) the original beat map converted to the stretched
-    // timeline; (3) fixed grid anchored at the first-beat phase.
+    // Click source priority for the selected beat mode:
+    //  1. the stretched file's OWN map for this mode (ground truth of what
+    //     actually plays — captures atempo's tiny ratio error too)
+    //  2. the original song's map for this mode, converted to the stretched
+    //     timeline (divide by ratio)
+    //  3. fixed grid anchored at the first-beat phase (fallback)
     let beatMap: number[] | null = null
     let phase: number | null = null
     if (item && srcBpm != null && srcBpm > 0) {
-      const processed = item.processedBeatTimes
-      if (processed && processed.length >= 2) {
-        beatMap = processed
+      const ratio = targetBpm / srcBpm
+      const fromProcessed = item.processedBeatMaps?.[beatMode] ?? (beatMode === 'grid' ? item.processedBeatTimes : null)
+      if (fromProcessed && fromProcessed.length >= 2) {
+        beatMap = fromProcessed
       } else {
-        const times = item.song.beat_times
-        if (times && times.length >= 2) {
-          beatMap = times.map((t) => t / (targetBpm / srcBpm))
+        const fromSong = beatMode === 'grid' ? item.song.beat_times : item.song.beat_maps?.[beatMode]
+        if (fromSong && fromSong.length >= 2) {
+          beatMap = fromSong.map((t) => t / ratio)
         } else if (off != null) {
           phase = ((off * srcBpm) / targetBpm) % (60 / targetBpm)
         }
@@ -319,7 +328,7 @@ export default function App() {
     // Record scheduled clicks for the visualizer; clear on song change.
     const unsub = m.onClick((t) => clicksRef.current.push(t))
     return () => unsub()
-  }, [targetBpm, metronomeVolume, metronomeOn, phaseNudge, currentIndex, playlist])
+  }, [targetBpm, metronomeVolume, metronomeOn, phaseNudge, beatMode, currentIndex, playlist])
 
   useEffect(() => {
     const m = metronomeRef.current
@@ -347,13 +356,18 @@ export default function App() {
       return { predicted: [] as number[], actual: [] as number[] }
     }
     const ratio = targetBpm / curItem.song.original_bpm
-    const predicted = (curItem.song.beat_times ?? []).map((t) => t / ratio)
+    // 预期: the ORIGINAL song's map for this mode, mapped to the stretched timeline
+    const predicted =
+      beatMode === 'grid'
+        ? (curItem.song.beat_times ?? []).map((t) => t / ratio)
+        : (curItem.song.beat_maps?.[beatMode] ?? []).map((t) => t / ratio)
+    // 实际: what the metronome actually clicks (stretched file's own map)
     const actual =
-      curItem.processedBeatTimes && curItem.processedBeatTimes.length >= 2
-        ? curItem.processedBeatTimes
-        : predicted
+      curItem.processedBeatMaps?.[beatMode] ??
+      (beatMode === 'grid' ? curItem.processedBeatTimes : null) ??
+      predicted
     return { predicted, actual }
-  }, [curItem, targetBpm])
+  }, [curItem, targetBpm, beatMode])
 
   return (
     <div className="min-h-full pb-44">
@@ -446,6 +460,11 @@ export default function App() {
           }
           visOn={visOn}
           onToggleVisualizer={() => setVisOn((v) => !v)}
+          beatMode={beatMode}
+          onBeatMode={(m) => {
+            setBeatMode(m)
+            localStorage.setItem('runbpm.beatMode', m)
+          }}
           onTogglePlay={() => {
             const audio = audioRef.current
             if (!audio) return

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import type { PlaylistItem } from '../types'
+import type { BeatMode, PlaylistItem } from '../types'
+import { BEAT_MODES } from '../types'
 import { formatBpm, formatDuration } from '../lib/format'
 import { TempoArrow } from './TempoArrow'
 
@@ -16,6 +17,8 @@ interface Props {
   /** optional scrolling beat ruler rendered inside the metronome settings */
   visualizer: ReactNode
   visOn: boolean
+  /** selectable beat-map mode */
+  beatMode: BeatMode
   onTogglePlay: () => void
   onPrev: () => void
   onNext: () => void
@@ -25,6 +28,7 @@ interface Props {
   onMetronomeVolume: (v: number) => void
   onPhaseNudge: (pct: number) => void
   onToggleVisualizer: () => void
+  onBeatMode: (m: BeatMode) => void
 }
 
 export function PlayerBar(p: Props) {
@@ -183,6 +187,25 @@ export function PlayerBar(p: Props) {
             </button>
           </div>
         )}
+        {/* beat-mode selector */}
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line/60 pt-2 text-xs text-white/50">
+          <span>拍点模式</span>
+          {BEAT_MODES.map((m) => (
+            <button
+              key={m.id}
+              onClick={() => p.onBeatMode(m.id)}
+              title={m.desc}
+              className={`rounded px-2 py-0.5 ${
+                p.beatMode === m.id ? 'bg-run text-ink' : 'bg-line text-white/60 hover:text-white'
+              }`}
+            >
+              {m.label}
+            </button>
+          ))}
+          <span className="text-white/25">
+            {BEAT_MODES.find((m) => m.id === p.beatMode)?.desc}
+          </span>
+        </div>
         {p.visualizer}
       </div>
     </div>

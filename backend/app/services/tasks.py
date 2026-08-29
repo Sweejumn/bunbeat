@@ -96,6 +96,7 @@ async def run_analysis(song_id: str) -> None:
             duration=duration,
             beat_offset=result.beat_offset,
             beat_times=json.dumps(result.beat_times) if result.beat_times else None,
+            beat_maps=json.dumps(result.beat_maps) if result.beat_maps else None,
         )
         logger.info("song %s -> %s BPM (conf=%.2f)", song["filename"], result.bpm, result.confidence)
     except Exception as exc:  # noqa: BLE001
@@ -122,9 +123,10 @@ async def run_processing(task_id: str) -> None:
             result = await asyncio.to_thread(analyze_bpm, out)
             processed_bpm = result.bpm if result.bpm else None
             processed_beats = json.dumps(result.beat_times) if result.beat_times else None
+            processed_maps = json.dumps(result.beat_maps) if result.beat_maps else None
         except Exception:  # noqa: BLE001
             logger.warning("post-process beat analysis failed for %s", song["filename"])
-            processed_bpm, processed_beats = None, None
+            processed_bpm, processed_beats, processed_maps = None, None, None
         database.update_task(
             task_id,
             status="done",
@@ -132,6 +134,7 @@ async def run_processing(task_id: str) -> None:
             output_path=str(out),
             processed_bpm=processed_bpm,
             processed_beat_times=processed_beats,
+            processed_beat_maps=processed_maps,
         )
         logger.info("processed %s -> %s", song["filename"], out)
     except Exception as exc:  # noqa: BLE001

@@ -44,6 +44,7 @@ def init_db() -> None:
                 bpm_error     TEXT,
                 beat_offset   REAL,
                 beat_times    TEXT,
+                beat_maps     TEXT,
                 file_path     TEXT NOT NULL,
                 mime_type     TEXT,
                 size          INTEGER NOT NULL DEFAULT 0,
@@ -59,6 +60,7 @@ def init_db() -> None:
                 output_path TEXT,
                 processed_bpm REAL,
                 processed_beat_times TEXT,
+                processed_beat_maps TEXT,
                 created_at  TEXT NOT NULL,
                 updated_at  TEXT NOT NULL
             );
@@ -77,11 +79,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE songs ADD COLUMN beat_offset REAL")
     if "beat_times" not in cols:
         conn.execute("ALTER TABLE songs ADD COLUMN beat_times TEXT")
+    if "beat_maps" not in cols:
+        conn.execute("ALTER TABLE songs ADD COLUMN beat_maps TEXT")
     tcols = {row[1] for row in conn.execute("PRAGMA table_info(processing_tasks)")}
     if "processed_bpm" not in tcols:
         conn.execute("ALTER TABLE processing_tasks ADD COLUMN processed_bpm REAL")
     if "processed_beat_times" not in tcols:
         conn.execute("ALTER TABLE processing_tasks ADD COLUMN processed_beat_times TEXT")
+    if "processed_beat_maps" not in tcols:
+        conn.execute("ALTER TABLE processing_tasks ADD COLUMN processed_beat_maps TEXT")
 
 
 # --------------------------------------------------------------------------
@@ -125,7 +131,7 @@ def update_song(song_id: str, **fields: Any) -> dict[str, Any] | None:
         return get_song(song_id)
     allowed = {
         "title", "artist", "duration", "original_bpm", "bpm_confidence",
-        "bpm_status", "bpm_error", "beat_offset", "beat_times",
+        "bpm_status", "bpm_error", "beat_offset", "beat_times", "beat_maps",
         "file_path", "mime_type", "size",
     }
     cols = [k for k in fields if k in allowed]
@@ -178,7 +184,10 @@ def find_task(song_id: str, target_bpm: float) -> dict[str, Any] | None:
 
 
 def update_task(task_id: str, **fields: Any) -> dict[str, Any] | None:
-    allowed = {"status", "error", "output_path", "processed_bpm", "processed_beat_times", "updated_at"}
+    allowed = {
+        "status", "error", "output_path", "processed_bpm",
+        "processed_beat_times", "processed_beat_maps", "updated_at",
+    }
     cols = [k for k in fields if k in allowed]
     if not cols:
         return get_task(task_id)
