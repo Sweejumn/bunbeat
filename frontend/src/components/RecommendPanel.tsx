@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Recommendation } from '../types'
 import { formatBpm, formatDuration } from '../lib/format'
+import { TempoArrow } from './TempoArrow'
 
 interface Props {
   recs: Recommendation[] | null
@@ -74,6 +75,9 @@ export function RecommendPanel({ recs, targetBpm, processing, onSelected, onPlay
               <div className="w-24 text-right font-mono text-sm text-run">
                 {formatBpm(r.song.original_bpm)} BPM
               </div>
+              <div className="w-10 text-center text-sm">
+                <TempoArrow originalBpm={r.song.original_bpm} targetBpm={targetBpm} />
+              </div>
               <div className="w-14 text-right">
                 <Stars n={r.score} />
               </div>
@@ -111,6 +115,11 @@ export function RecommendPanel({ recs, targetBpm, processing, onSelected, onPlay
             {processing.failed.length} 首处理失败（已自动跳过）：{processing.failed.join('、')}
           </p>
         )}
+        <p className="w-full text-xs text-white/30">
+          图例：<span className="text-sky-400">↑</span> 需加快 · <span className="text-orange-400">↓</span> 需减慢
+          （箭头越多差异越大）· <span className="text-red-400">✕</span> 差异过大无法处理 ·{' '}
+          <span className="text-white/40">=</span> 与目标一致
+        </p>
       </div>
     </section>
   )

@@ -1,5 +1,6 @@
 import type { PlaylistItem } from '../types'
 import { formatBpm, formatDuration } from '../lib/format'
+import { TempoArrow } from './TempoArrow'
 
 interface Props {
   item: PlaylistItem | null
@@ -48,7 +49,8 @@ export function PlayerBar(p: Props) {
             <p className="truncate text-sm font-semibold text-white">{item.song.title}</p>
             <p className="truncate text-xs text-white/40">
               {item.song.artist} · {formatBpm(item.song.original_bpm)} →{' '}
-              <span className="text-run">{Math.round(item.targetBpm)} BPM</span>
+              <span className="text-run">{Math.round(item.targetBpm)} BPM</span>{' '}
+              <TempoArrow originalBpm={item.song.original_bpm} targetBpm={item.targetBpm} />
               {p.metronomeOn && <span className="ml-1 text-accent">🥁 节拍器</span>}
             </p>
           </div>
