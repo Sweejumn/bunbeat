@@ -47,6 +47,13 @@ export default function App() {
     setToast({ msg, kind })
   }, [])
 
+  // Auto-dismiss toasts.
+  useEffect(() => {
+    if (!toast) return
+    const t = window.setTimeout(() => setToast(null), 4500)
+    return () => window.clearTimeout(t)
+  }, [toast])
+
   // ------------------------------------------------------------------ data
   const refreshSongs = useCallback(async () => {
     try {
@@ -353,19 +360,16 @@ export default function App() {
 
       {/* toast */}
       {toast && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setToast(null)} aria-hidden />
-          <div
-            className={`fixed left-1/2 top-4 z-50 max-w-[90vw] -translate-x-1/2 rounded-xl px-4 py-2.5 text-sm font-medium shadow-lg ${
-              toast.kind === 'error' ? 'bg-red-500/90 text-white' : 'bg-run text-ink'
-            }`}
-          >
-            {toast.msg}
-            <button className="ml-3 text-xs opacity-70 hover:opacity-100" onClick={() => setToast(null)}>
-              ✕
-            </button>
-          </div>
-        </>
+        <div
+          className={`pointer-events-auto fixed left-1/2 top-4 z-50 max-w-[90vw] -translate-x-1/2 rounded-xl px-4 py-2.5 text-sm font-medium shadow-lg ${
+            toast.kind === 'error' ? 'bg-red-500/90 text-white' : 'bg-run text-ink'
+          }`}
+        >
+          {toast.msg}
+          <button className="ml-3 text-xs opacity-70 hover:opacity-100" onClick={() => setToast(null)}>
+            ✕
+          </button>
+        </div>
       )}
     </div>
   )

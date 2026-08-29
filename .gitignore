@@ -7,6 +7,9 @@ venv/
 backend/data/
 backend/*.log
 
+# --- user-provided test music ---
+sandbox/
+
 # --- Node / frontend ---
 node_modules/
 frontend/dist/
