@@ -40,6 +40,9 @@ export function MusicVisualizer({ beats, clicksRef, getCurrentTime, getPaused, a
     let lastDraw = 0
     let width = 100
     let height = 96
+    // NOTE: only the ResizeObserver resizes the canvas; resizing resets
+    // canvas.width which CLEARS the frame — doing that on every effect run
+    // was the source of the flicker.
     const resize = () => {
       const rect = canvas.getBoundingClientRect()
       const dpr = window.devicePixelRatio || 1
@@ -49,21 +52,29 @@ export function MusicVisualizer({ beats, clicksRef, getCurrentTime, getPaused, a
       canvas.height = Math.round(height * dpr)
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     }
-    resize()
     const ro = new ResizeObserver(resize)
     ro.observe(canvas)
+    resize()
 
     const loop = (t: number) => {
       raf = requestAnimationFrame(loop)
+      if (document.hidden) return
       if (t - lastDraw < FPS_CAP) return
       lastDraw = t
-      if (getPaused()) return // freeze everything while paused
 
       const now = getCurrentTime()
       const cx = width / 2
+      const paused = getPaused()
 
-      // --- collect one analyser chunk -> one envelope block ---
-      if (analyser) {
+      // Trim click history so the list cannot grow without bound.
+      const clicks = clicksRef.current
+      if (clicks.length > 200) {
+        clicksRef.current = clicks.filter((c) => c > now - 15)
+      }
+
+      // --- collect one analyser chunk -> one envelope block (only while
+      // playing; paused audio feeds silence anyway) ---
+      if (analyser && !paused) {
         if (!envRef.current) {
           const n = Math.ceil((HISTORY_SEC * analyser.context.sampleRate) / analyser.fftSize)
           envRef.current = { min: new Float32Array(n), max: new Float32Array(n), write: 0, n }
@@ -96,7 +107,7 @@ export function MusicVisualizer({ beats, clicksRef, getCurrentTime, getPaused, a
 
       // --- waveform envelope (1 read per pixel) ---
       const env = envRef.current
-      if (env && analyser) {
+      if (env && analyser && !paused) {
         const blockDur = analyser.fftSize / analyser.context.sampleRate
         ctx.strokeStyle = 'rgba(231,239,233,0.85)'
         ctx.lineWidth = 1
@@ -119,11 +130,11 @@ export function MusicVisualizer({ beats, clicksRef, getCurrentTime, getPaused, a
       } else {
         ctx.fillStyle = 'rgba(255,255,255,0.15)'
         ctx.font = '11px sans-serif'
-        ctx.fillText('音乐波形', 12, height / 2 + 4)
+        ctx.fillText(paused ? '已暂停' : '音乐波形', 12, height / 2 + 4)
       }
 
       // --- live frequency meter at the playhead (16 bands) ---
-      if (analyser && freqScratch.current) {
+      if (analyser && freqScratch.current && !paused) {
         const f = freqScratch.current
         const bw = Math.min(26, width * 0.03)
         const startX = cx - (BAND_COUNT * bw) / 2
@@ -135,16 +146,16 @@ export function MusicVisualizer({ beats, clicksRef, getCurrentTime, getPaused, a
         }
       }
 
-      // --- beat grid lines (green), same time axis as the waveform ---
+      // --- beat grid lines (green), visible window only ---
       ctx.fillStyle = 'rgba(52,211,153,0.7)'
       for (const b of beats) {
         const x = Math.round(cx + (b - now) * PX)
         if (x >= 0 && x < width) ctx.fillRect(x, waveTop, 2, waveH)
       }
 
-      // --- live clicks (amber dots) ---
+      // --- live clicks (amber dots), visible window only ---
       ctx.fillStyle = '#fbbf24'
-      for (const ct of clicksRef.current) {
+      for (const ct of clicks) {
         const x = Math.round(cx + (ct - now) * PX)
         if (x >= -4 && x < width + 4) {
           ctx.beginPath()

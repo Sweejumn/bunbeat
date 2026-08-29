@@ -104,6 +104,7 @@ export default function App() {
   // Stable accessors (identity must not change per render — otherwise the
   // visualizer's rAF/timer effects would tear down and restart constantly).
   const getCurrentTime = useCallback(() => audioRef.current?.currentTime ?? 0, [])
+  const getPaused = useCallback(() => audioRef.current?.paused ?? true, [])
 
   // Runtime diagnostics: logs DOM/heap/fps/pendingClicks every 10s so a
   // resource runaway is easy to locate next time (see lib/monitor.ts).
@@ -492,7 +493,7 @@ export default function App() {
                 beats={activeBeatMap ?? []}
                 clicksRef={clicksRef}
                 getCurrentTime={getCurrentTime}
-                getPaused={() => audioRef.current?.paused ?? true}
+                getPaused={getPaused}
                 analyser={ensureVisualizerAnalyser()}
               />
             ) : null
