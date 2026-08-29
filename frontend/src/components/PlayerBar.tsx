@@ -49,13 +49,13 @@ function TapTempo({
   getCurrentTime: () => number
   onTaps: (taps: number[]) => void
 }) {
-  // Armed switch: tapping only takes effect while enabled (default off).
-  const [armed, setArmed] = useState(false)
+  // Tapping always computes BPM; the first beat is only set while this
+  // switch is on (default off).
+  const [setFirstBeat, setSetFirstBeat] = useState(false)
   const [taps, setTaps] = useState<number[]>([])
   const lastTapRef = useRef(0)
 
   const handleTap = () => {
-    if (!armed) return
     const t = getCurrentTime()
     const now = performance.now()
     const next = now - lastTapRef.current > 2000 ? [t] : [...taps, t]
@@ -65,39 +65,37 @@ function TapTempo({
   }
 
   useEffect(() => {
-    // BPM is computed after 8 taps (median interval), first tap = first beat.
+    // BPM is computed after 8 taps (median interval). First beat is applied
+    // only when the "设首拍" switch is on.
     if (taps.length < 8) return
     const ivs = taps.slice(1).map((x, i) => x - taps[i]).filter((x) => x > 0.1)
     if (ivs.length >= 2) {
       const sorted = [...ivs].sort((a, b) => a - b)
       const period = sorted[Math.floor(sorted.length / 2)] // median
-      onCalibrate(Math.round(60 / period), Math.max(0, Math.round(taps[0] * 1000) / 1000))
+      const firstBeat = setFirstBeat ? Math.max(0, Math.round(taps[0] * 1000) / 1000) : null
+      onCalibrate(Math.round(60 / period), firstBeat)
     }
     setTaps([])
     onTaps([])
-    setArmed(false)
-  }, [taps, onCalibrate, onTaps])
+  }, [taps, onCalibrate, onTaps, setFirstBeat])
 
   return (
     <span className="flex items-center gap-1">
       <button
-        onClick={() => setArmed((v) => !v)}
-        className={`rounded px-2 py-1 transition-colors ${
-          armed ? 'bg-accent text-ink' : 'bg-line text-white/60 hover:text-white'
-        }`}
-        title="开启后点按打拍才生效（默认关闭）；敲 8 下自动计算 BPM 并设置首拍"
-      >
-        🎯 拍打 {armed ? '开' : '关'}
-      </button>
-      <button
         onClick={handleTap}
-        disabled={!armed}
-        className={`rounded px-2 py-1 transition-colors ${
-          armed ? 'bg-line text-white/70 hover:text-white' : 'cursor-not-allowed bg-line/50 text-white/25'
-        }`}
-        title="先开启「拍打」开关，再跟着音乐点按 8 下"
+        className="rounded bg-line px-2 py-1 text-white/70 hover:text-white"
+        title="跟着音乐拍子点按 8 下，自动计算 BPM；打开「设首拍」时同时把第 1 拍设为拍点起点"
       >
         👆 点按打拍（{taps.length}/8）
+      </button>
+      <button
+        onClick={() => setSetFirstBeat((v) => !v)}
+        className={`rounded px-2 py-1 transition-colors ${
+          setFirstBeat ? 'bg-accent text-ink' : 'bg-line text-white/60 hover:text-white'
+        }`}
+        title="开启后，打拍会把第 1 拍设为首拍（默认关闭）"
+      >
+        🎯 设首拍 {setFirstBeat ? '开' : '关'}
       </button>
     </span>
   )
