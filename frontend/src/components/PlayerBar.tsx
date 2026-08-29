@@ -43,22 +43,30 @@ interface Props {
 function TapTempo({
   onCalibrate,
   getCurrentTime,
+  onTaps,
 }: {
   onCalibrate: (bpm: number | null, firstBeat: number | null) => void
   getCurrentTime: () => number
+  onTaps: (taps: number[]) => void
 }) {
+  // Armed switch: tapping only takes effect while enabled (default off).
+  const [armed, setArmed] = useState(false)
   const [taps, setTaps] = useState<number[]>([])
   const lastTapRef = useRef(0)
 
   const handleTap = () => {
+    if (!armed) return
     const t = getCurrentTime()
     const now = performance.now()
-    setTaps((prev) => (now - lastTapRef.current > 2000 ? [t] : [...prev, t]))
+    const next = now - lastTapRef.current > 2000 ? [t] : [...taps, t]
     lastTapRef.current = now
+    setTaps(next)
+    onTaps(next)
   }
 
   useEffect(() => {
-    if (taps.length < 4) return
+    // BPM is computed after 8 taps (median interval), first tap = first beat.
+    if (taps.length < 8) return
     const ivs = taps.slice(1).map((x, i) => x - taps[i]).filter((x) => x > 0.1)
     if (ivs.length >= 2) {
       const sorted = [...ivs].sort((a, b) => a - b)
@@ -66,21 +74,44 @@ function TapTempo({
       onCalibrate(Math.round(60 / period), Math.max(0, Math.round(taps[0] * 1000) / 1000))
     }
     setTaps([])
-  }, [taps, onCalibrate])
+    onTaps([])
+    setArmed(false)
+  }, [taps, onCalibrate, onTaps])
 
   return (
-    <button
-      onClick={handleTap}
-      className="rounded bg-line px-2 py-1 text-white/70 hover:text-white"
-      title="跟着音乐拍子点按 4 下，自动计算 BPM 和首拍"
-    >
-      👆 点按打拍（{taps.length}/4）
-    </button>
+    <span className="flex items-center gap-1">
+      <button
+        onClick={() => setArmed((v) => !v)}
+        className={`rounded px-2 py-1 transition-colors ${
+          armed ? 'bg-accent text-ink' : 'bg-line text-white/60 hover:text-white'
+        }`}
+        title="开启后点按打拍才生效（默认关闭）；敲 8 下自动计算 BPM 并设置首拍"
+      >
+        🎯 拍打 {armed ? '开' : '关'}
+      </button>
+      <button
+        onClick={handleTap}
+        disabled={!armed}
+        className={`rounded px-2 py-1 transition-colors ${
+          armed ? 'bg-line text-white/70 hover:text-white' : 'cursor-not-allowed bg-line/50 text-white/25'
+        }`}
+        title="先开启「拍打」开关，再跟着音乐点按 8 下"
+      >
+        👆 点按打拍（{taps.length}/8）
+      </button>
+    </span>
   )
 }
 
 export function PlayerBar(p: Props) {
   const { item } = p
+  const [tapMarks, setTapMarks] = useState<number[]>([])
+
+  // Clear tap marks when the track changes.
+  useEffect(() => {
+    setTapMarks([])
+  }, [item?.song.id])
+
   if (!item) return null
 
   const nudgeLabel =
@@ -94,7 +125,9 @@ export function PlayerBar(p: Props) {
     <div className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-panel/95 backdrop-blur">
       <div className="mx-auto max-w-5xl px-4 py-3">
         {/* simple beat ruler */}
-        {p.rulerOn && <BeatRuler beats={p.rulerBeats} getCurrentTime={p.getCurrentTime} />}
+        {p.rulerOn && (
+          <BeatRuler beats={p.rulerBeats} taps={tapMarks} getCurrentTime={p.getCurrentTime} />
+        )}
         {/* progress */}
         <div className="flex items-center gap-3">
           <span className="w-12 text-right font-mono text-xs text-white/40">
@@ -268,8 +301,14 @@ export function PlayerBar(p: Props) {
         {/* manual beat calibration (metronome-related) */}
         {p.metronomeOn && (
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line/60 pt-2 text-xs text-white/50">
-          <span>校准</span>
-          <TapTempo onCalibrate={p.onSetCal} getCurrentTime={p.getCurrentTime} />
+          <span className="flex items-center gap-1">
+            校准
+          </span>
+          <TapTempo
+            onCalibrate={p.onSetCal}
+            getCurrentTime={p.getCurrentTime}
+            onTaps={setTapMarks}
+          />
           <span className="flex items-center gap-1">
             BPM
             <input
