@@ -492,6 +492,7 @@ export default function App() {
                 beats={activeBeatMap ?? []}
                 clicksRef={clicksRef}
                 getCurrentTime={getCurrentTime}
+                getPaused={() => audioRef.current?.paused ?? true}
                 analyser={ensureVisualizerAnalyser()}
               />
             ) : null
