@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { Recommendation } from '../types'
-import { formatBpm, formatDuration } from '../lib/format'
+import { formatDuration } from '../lib/format'
 import { TempoArrow } from './TempoArrow'
 
 interface Props {
@@ -11,19 +11,16 @@ interface Props {
   onPlay: (songIds: string[]) => void
 }
 
-function Stars({ n }: { n: number }) {
-  return (
-    <span className="text-accent" title={`${n} 星推荐`}>
-      {'★'.repeat(n)}
-      <span className="text-white/15">{'★'.repeat(Math.max(0, 5 - n))}</span>
-    </span>
-  )
-}
-
 /** Tempo change in percent (relative to the original): |target-orig| / orig * 100 */
 function diffPct(orig: number | null | undefined, target: number): number {
   if (orig == null || orig <= 0) return 0
   return Math.round((Math.abs(orig - target) / orig) * 1000) / 10
+}
+
+/** Unrounded percent — used for sorting by relative tempo difference. */
+function rawDiffPct(orig: number | null | undefined, target: number): number {
+  if (orig == null || orig <= 0) return Number.POSITIVE_INFINITY
+  return Math.abs(orig - target) / orig
 }
 
 export function RecommendPanel({ recs, targetBpm, processing, onSelected, onPlay }: Props) {
@@ -33,7 +30,16 @@ export function RecommendPanel({ recs, targetBpm, processing, onSelected, onPlay
     if (recs) setSelected(new Set(recs.map((r) => r.song.id)))
   }, [recs])
 
-  if (!recs) return null
+  // Sort by relative tempo difference (percent), ascending.
+  const sorted = useMemo(() => {
+    if (!recs) return null
+    return [...recs].sort(
+      (a, b) =>
+        rawDiffPct(a.song.original_bpm, targetBpm) - rawDiffPct(b.song.original_bpm, targetBpm),
+    )
+  }, [recs, targetBpm])
+
+  if (!recs || !sorted) return null
 
   const toggle = (id: string) => {
     const next = new Set(selected)
@@ -46,10 +52,21 @@ export function RecommendPanel({ recs, targetBpm, processing, onSelected, onPlay
   const selectedIds = Array.from(selected)
   const allSelected = recs.length > 0 && selectedIds.length === recs.length
 
+  // BPM shown as "155+5" — the target is 155 and +5 is how far this song
+  // sits above it; the "差多少" column is gone, only the percent remains.
+  const bpmText = (orig: number | null | undefined): string => {
+    if (orig == null || orig <= 0) return '—'
+    const target = Math.round(targetBpm)
+    const delta = Math.round(orig - target)
+    if (delta > 0) return `${target}+${delta}`
+    if (delta < 0) return `${target}${delta}`
+    return `${target}`
+  }
+
   return (
     <section>
       <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-lg font-bold text-white">推荐歌曲（目标 {targetBpm} BPM）</h2>
+        <h2 className="text-lg font-bold text-white">推荐歌曲</h2>
         <button
           className="text-xs text-white/50 hover:text-run"
           onClick={() => {
@@ -64,7 +81,7 @@ export function RecommendPanel({ recs, targetBpm, processing, onSelected, onPlay
 
       <div className="overflow-hidden rounded-xl border border-line bg-panel">
         <ul className="divide-y divide-line">
-          {recs.map((r, i) => (
+          {sorted.map((r, i) => (
             <li key={r.song.id} className="flex items-center gap-3 px-4 py-3">
               <input
                 type="checkbox"
@@ -78,20 +95,14 @@ export function RecommendPanel({ recs, targetBpm, processing, onSelected, onPlay
                 <p className="text-xs text-white/40">{r.song.artist}</p>
               </div>
               <div className="hidden text-xs text-white/30 sm:block">{formatDuration(r.song.duration)}</div>
-              <div className="w-24 text-right font-mono text-sm text-run">
-                {formatBpm(r.song.original_bpm)} BPM
+              <div className="w-16 text-right font-mono text-sm text-run" title={`目标 ${targetBpm} BPM`}>
+                {bpmText(r.song.original_bpm)}
               </div>
               <div className="w-10 text-center text-sm">
                 <TempoArrow originalBpm={r.song.original_bpm} targetBpm={targetBpm} />
               </div>
-              <div className="w-14 text-right">
-                <Stars n={r.score} />
-              </div>
-              <div
-                className="hidden w-24 text-right text-xs text-white/30 md:block"
-                title={`距目标 ${Math.round(targetBpm)} BPM 差 ${r.distance.toFixed(1)} BPM`}
-              >
-                差 {r.distance.toFixed(0)} · {diffPct(r.song.original_bpm, targetBpm)}%
+              <div className="w-12 text-right font-mono text-xs text-white/40">
+                {diffPct(r.song.original_bpm, targetBpm)}%
               </div>
             </li>
           ))}
@@ -125,9 +136,10 @@ export function RecommendPanel({ recs, targetBpm, processing, onSelected, onPlay
           </p>
         )}
         <p className="w-full text-xs text-white/30">
-          图例：<span className="text-red-400">↑/↓</span> 变速超过 3%（听感有明显变化）·{' '}
-          <span className="text-run">=</span> 与目标几乎一致 ·{' '}
-          <span className="text-red-400">✕</span> 差异过大无法处理
+          图例：<span className="text-run">=</span> 差&lt;3% ·{' '}
+          <span className="text-run">↑/↓</span> 3–5% · <span className="text-amber-400">↑/↓</span>{' '}
+          5–8% · <span className="text-red-400">↑/↓</span> 8–12% ·{' '}
+          <span className="text-red-400">✕</span> &gt;12%
         </p>
       </div>
     </section>
