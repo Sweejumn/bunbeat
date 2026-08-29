@@ -77,7 +77,7 @@ export const MODES: ModeDef[] = [
   { id: 'jog', label: '慢跑', icon: '🏃', range: [120, 145], defaultBpm: 132 },
   { id: 'run', label: '跑步', icon: '🏃‍♂️', range: [145, 165], defaultBpm: 155 },
   { id: 'sprint', label: '快跑', icon: '⚡', range: [165, 185], defaultBpm: 175 },
-  { id: 'custom', label: '自定义', icon: '🎯', range: [60, 220], defaultBpm: 150 },
+  { id: 'custom', label: '自定义', icon: '🎯', range: [60, 220], defaultBpm: 95 },
 ]
 
 export interface PlaylistItem {

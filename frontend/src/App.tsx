@@ -8,7 +8,7 @@ import { UploadZone } from './components/UploadZone'
 import { Metronome } from './lib/metronome'
 import { startDiagnostics } from './lib/monitor'
 import type { BeatMode, ModeId, PlaylistItem, ProcessTask, Recommendation, Song } from './types'
-import { BEAT_MODES, MODES } from './types'
+import { BEAT_MODES } from './types'
 
 interface Toast {
   msg: string
@@ -162,11 +162,12 @@ export default function App() {
   )
 
   // ------------------------------------------------------------------- mode
+  // The ModePicker drives both the mode and the target BPM (one long slider
+  // with zone-based mode switching); here we only record the mode and drop
+  // stale recommendations.
   const handleMode = useCallback((m: ModeId) => {
     setMode(m)
-    const def = MODES.find((x) => x.id === m)
-    if (def && m !== 'custom') setTargetBpm(def.defaultBpm)
-    setRecs(null) // old recommendations no longer match the new target
+    setRecs(null)
   }, [])
 
   const handleTarget = useCallback((bpm: number) => {
