@@ -66,7 +66,9 @@ function TapTempo({
 
   useEffect(() => {
     // BPM is computed after 8 taps (median interval). First beat is applied
-    // only when the "设首拍" switch is on.
+    // only when the "设首拍" switch is on. Tap marks on the ruler are kept
+    // until cleared manually or the track changes (useful for comparing
+    // your taps against the detected beats).
     if (taps.length < 8) return
     const ivs = taps.slice(1).map((x, i) => x - taps[i]).filter((x) => x > 0.1)
     if (ivs.length >= 2) {
@@ -76,7 +78,6 @@ function TapTempo({
       onCalibrate(Math.round(60 / period), firstBeat)
     }
     setTaps([])
-    onTaps([])
   }, [taps, onCalibrate, onTaps, setFirstBeat])
 
   return (
@@ -84,7 +85,7 @@ function TapTempo({
       <button
         onClick={handleTap}
         className="rounded bg-line px-2 py-1 text-white/70 hover:text-white"
-        title="跟着音乐拍子点按 8 下，自动计算 BPM；打开「设首拍」时同时把第 1 拍设为拍点起点"
+        title="跟着音乐拍子点按 8 下，自动计算 BPM；每次点按都会在拍点标尺上留下黄色标记"
       >
         👆 点按打拍（{taps.length}/8）
       </button>
@@ -311,6 +312,15 @@ export function PlayerBar(p: Props) {
             getCurrentTime={p.getCurrentTime}
             onTaps={setTapMarks}
           />
+          {tapMarks.length > 0 && (
+            <button
+              onClick={() => setTapMarks([])}
+              className="rounded bg-line px-2 py-1 text-white/60 hover:text-white"
+              title={`清除标尺上的 ${tapMarks.length} 个打拍标记`}
+            >
+              🧹 清标记（{tapMarks.length}）
+            </button>
+          )}
           <span className="flex items-center gap-1">
             BPM
             <input

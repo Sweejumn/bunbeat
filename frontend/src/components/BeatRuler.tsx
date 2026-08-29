@@ -48,8 +48,8 @@ export function BeatRuler({ beats, getCurrentTime, taps = [] }: Props) {
           {taps.map((t, i) => (
             <div
               key={`tap-${i}`}
-              className="absolute inset-y-1 w-[3px] rounded bg-accent"
-              style={{ left: t * PX - 1.5 }}
+              className="absolute inset-y-0 w-[5px] rounded-sm bg-accent shadow-[0_0_6px_rgba(251,191,36,0.9)]"
+              style={{ left: t * PX - 2.5 }}
               title={`打拍 ${i + 1}: ${t.toFixed(3)}s`}
             />
           ))}
@@ -61,7 +61,7 @@ export function BeatRuler({ beats, getCurrentTime, taps = [] }: Props) {
       <div className="flex justify-between border-t border-line/40 px-2 py-0.5 text-[10px] text-white/25">
         <span>← 4s</span>
         <span>
-          绿线 = 拍点 · <span className="text-accent">黄条 = 打拍</span> · 穿过中心线即当前拍 · 暂停时静止
+          绿线 = 拍点 · <span className="text-accent">黄条 = 打拍（{taps.length}）</span> · 穿过中心线即当前拍 · 暂停时静止
         </span>
         <span>4s →</span>
       </div>
