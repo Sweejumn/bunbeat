@@ -77,6 +77,7 @@ async def run_analysis(song_id: str) -> None:
             original_bpm=result.bpm,
             bpm_confidence=result.confidence,
             duration=duration,
+            beat_offset=result.beat_offset,
         )
         logger.info("song %s -> %s BPM (conf=%.2f)", song["filename"], result.bpm, result.confidence)
     except Exception as exc:  # noqa: BLE001

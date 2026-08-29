@@ -7,6 +7,9 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     port: 5173,
+    // Atomic writes from some editors/tools create temp dirs that crash
+    // native Windows file watchers (EBUSY); polling avoids that entirely.
+    watch: { usePolling: true },
     proxy: {
       // Forward API calls to the FastAPI backend in dev mode.
       '/api': {

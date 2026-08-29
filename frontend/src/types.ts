@@ -10,6 +10,8 @@ export interface Song {
   bpm_confidence: number | null
   bpm_status: BpmStatus
   bpm_error: string | null
+  /** seconds of the first detected beat in the original audio (phase anchor) */
+  beat_offset: number | null
   mime_type: string | null
   size: number
   created_at: string

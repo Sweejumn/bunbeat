@@ -39,6 +39,7 @@ class BpmResult:
     duration: float | None
     error: str | None = None
     octave_corrected: bool = False
+    beat_offset: float | None = None  # seconds of the first detected beat (original timeline)
 
 
 def _onset_ac(onset_env: np.ndarray) -> np.ndarray:
@@ -198,6 +199,7 @@ def analyze_bpm(path: Path) -> BpmResult:
 
     # Confidence from inter-beat interval regularity.
     confidence = 0.0
+    beat_offset: float | None = None
     if beats is not None and len(beats) >= 4:
         intervals = np.diff(np.asarray(beats, dtype=float)) / sr
         mean_iv = float(np.mean(intervals))
@@ -205,6 +207,11 @@ def analyze_bpm(path: Path) -> BpmResult:
         if mean_iv > 0:
             cv = std_iv / mean_iv  # coefficient of variation
             confidence = float(np.clip(1.0 - cv * 3.0, 0.0, 1.0))
+        first = float(np.asarray(beats)[0])
+        if np.isfinite(first):
+            # First beat position in seconds — used to phase-align the
+            # metronome with the music after time-stretching.
+            beat_offset = round(first * HOP / sr, 4)
 
     duration = None
     try:
@@ -214,5 +221,5 @@ def analyze_bpm(path: Path) -> BpmResult:
 
     return BpmResult(
         bpm=bpm, confidence=confidence, duration=duration,
-        octave_corrected=octave_corrected,
+        octave_corrected=octave_corrected, beat_offset=beat_offset,
     )

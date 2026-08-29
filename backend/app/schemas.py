@@ -18,6 +18,7 @@ class SongOut(BaseModel):
     bpm_confidence: Optional[float] = None
     bpm_status: str
     bpm_error: Optional[str] = None
+    beat_offset: Optional[float] = None
     mime_type: Optional[str] = None
     size: int
     created_at: str

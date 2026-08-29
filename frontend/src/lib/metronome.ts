@@ -2,15 +2,18 @@
  * Browser-side metronome using the Web Audio API.
  *
  * Clicks are scheduled ahead of time (lookahead scheduler) and aligned to
- * the <audio> element's currentTime, so the metronome stays in sync with
- * the music. Every 4th beat is an accented "strong" click.
+ * the <audio> element's currentTime. A beat phase can be supplied so clicks
+ * land ON the music's actual beats (see `setPhase`): with a known phase the
+ * scheduler snaps to the grid  phase + k * (60/bpm), otherwise it free-runs
+ * from the current playback position.
  */
 export class Metronome {
   private ctx: AudioContext | null = null
   private timer: number | null = null
   private nextTime = 0
-  private beat = 0
   private bpm = 120
+  private phase = 0 // seconds at which a beat occurs (grid anchor)
+  private phaseKnown = false
   private enabled = false
   private vol = 0.5
   private audio: HTMLAudioElement
@@ -22,6 +25,14 @@ export class Metronome {
   setBpm(bpm: number): void {
     if (bpm === this.bpm) return
     this.bpm = bpm
+    if (this.enabled) this.restart()
+  }
+
+  /** Anchor the beat grid: a beat occurs at `phaseSeconds`, then every 60/bpm. */
+  setPhase(phaseSeconds: number | null | undefined): void {
+    const known = phaseSeconds != null && Number.isFinite(phaseSeconds) && phaseSeconds >= 0
+    this.phase = known ? phaseSeconds : 0
+    this.phaseKnown = known
     if (this.enabled) this.restart()
   }
 
@@ -75,9 +86,16 @@ export class Metronome {
   private restart(): void {
     this.stopScheduler()
     if (!this.enabled || !this.ctx) return
-    // Align the next beat shortly after the current playback position.
-    this.nextTime = this.audio.currentTime + 0.08
-    this.beat = Math.floor(this.nextTime / (60 / this.bpm))
+    const interval = 60 / this.bpm
+    const now = this.audio.currentTime + 0.05
+    if (this.phaseKnown) {
+      // Next grid beat at or after `now`: phase + k*interval.
+      const k = Math.max(0, Math.ceil((now - this.phase) / interval - 1e-9))
+      this.nextTime = this.phase + k * interval
+      while (this.nextTime < now) this.nextTime += interval
+    } else {
+      this.nextTime = now
+    }
     this.timer = window.setInterval(this.tick, 25)
   }
 
@@ -96,25 +114,22 @@ export class Metronome {
     const lookahead = 0.15
     const interval = 60 / this.bpm
     while (this.nextTime < this.audio.currentTime + lookahead) {
-      this.scheduleClick(this.nextTime, this.beat)
+      this.scheduleClick(this.nextTime)
       this.nextTime += interval
-      this.beat += 1
     }
   }
 
-  private scheduleClick(time: number, beat: number): void {
+  private scheduleClick(time: number): void {
     if (!this.ctx) return
     const osc = this.ctx.createOscillator()
     const gain = this.ctx.createGain()
-    const strong = beat % 4 === 0
     osc.type = 'square'
-    osc.frequency.value = strong ? 1760 : 1174 // A6 / D6
-    const peak = this.vol * (strong ? 0.55 : 0.32)
-    gain.gain.setValueAtTime(peak, time)
-    gain.gain.exponentialRampToValueAtTime(0.0008, time + (strong ? 0.09 : 0.06))
+    osc.frequency.value = 1174 // D6
+    gain.gain.setValueAtTime(this.vol * 0.32, time)
+    gain.gain.exponentialRampToValueAtTime(0.0008, time + 0.06)
     osc.connect(gain)
     gain.connect(this.ctx.destination)
     osc.start(time)
-    osc.stop(time + 0.12)
+    osc.stop(time + 0.08)
   }
 }

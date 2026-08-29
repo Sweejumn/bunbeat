@@ -248,10 +248,23 @@ export default function App() {
     if (!audio) return
     if (!metronomeRef.current) metronomeRef.current = new Metronome(audio)
     const m = metronomeRef.current
+    const item = currentIndex >= 0 ? playlist[currentIndex] : null
+    // Phase-align clicks with the music: the first beat of the original
+    // audio sits at beat_offset; after time-stretching by target/original it
+    // moves to beat_offset * original / target, and the beat period becomes
+    // 60/target. Snap the metronome grid to that position.
+    let phase: number | null = null
+    const off = item?.song.beat_offset
+    const srcBpm = item?.song.original_bpm
+    if (item && off != null && srcBpm != null && srcBpm > 0) {
+      const interval = 60 / targetBpm
+      phase = ((off * srcBpm) / targetBpm) % interval
+    }
+    m.setPhase(phase)
     m.setBpm(targetBpm)
     m.setVolume(metronomeVolume)
     m.setEnabled(metronomeOn)
-  }, [targetBpm, metronomeVolume, metronomeOn])
+  }, [targetBpm, metronomeVolume, metronomeOn, currentIndex, playlist])
 
   useEffect(() => {
     const m = metronomeRef.current
