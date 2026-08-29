@@ -326,20 +326,11 @@ export function PlayerBar(p: Props) {
             onTap={(t) =>
               setTapMarks((prev) => {
                 const next = [...prev, t]
-                // Keep only the most recent 10 marks on the ruler.
-                return next.length > 10 ? next.slice(next.length - 10) : next
+                // Keep only the most recent 20 marks on the ruler.
+                return next.length > 20 ? next.slice(next.length - 20) : next
               })
             }
           />
-          {tapMarks.length > 0 && (
-            <button
-              onClick={() => setTapMarks([])}
-              className="rounded bg-line px-2 py-1 text-white/60 hover:text-white"
-              title={`清除标尺上的 ${tapMarks.length} 个打拍标记`}
-            >
-              🧹 清标记（{tapMarks.length}）
-            </button>
-          )}
           <span className="flex items-center gap-1">
             BPM
             <input
