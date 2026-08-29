@@ -37,7 +37,11 @@ export function BeatRuler({ beats, getCurrentTime, taps = [] }: Props) {
   return (
     <div className="mt-2 overflow-hidden rounded-lg border border-line bg-ink/70">
       <div className="relative h-14">
-        <div ref={rowRef} className="absolute inset-y-0 will-change-transform">
+        {/* inset-0 (not inset-y-0): the row must span the full container
+            width so the 50% inside the transform means the container center
+            (the playhead). With inset-y-0 the row collapses to 0px wide and
+            every tick lands at the left edge. */}
+        <div ref={rowRef} className="absolute inset-0 will-change-transform">
           {beats.map((t) => (
             <div
               key={t}
