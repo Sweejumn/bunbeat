@@ -22,6 +22,7 @@ class SongOut(BaseModel):
     beat_offset: Optional[float] = None
     beat_times: Optional[list[float]] = None
     beat_maps: Optional[dict[str, list[float]]] = None
+    phase_reliability: Optional[float] = None
     mime_type: Optional[str] = None
     size: int
     created_at: str

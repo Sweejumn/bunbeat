@@ -16,6 +16,8 @@ export interface Song {
   beat_times: number[] | null
   /** alternate beat maps per mode (light / snap), original timeline */
   beat_maps: Record<BeatMode, number[]> | null
+  /** 0..1: do independent signals agree on the beat phase? low = calibrate manually */
+  phase_reliability: number | null
   mime_type: string | null
   size: number
   created_at: string

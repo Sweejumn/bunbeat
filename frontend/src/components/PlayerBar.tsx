@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { BeatMode, PlaylistItem } from '../types'
 import { BEAT_MODES } from '../types'
 import { formatBpm, formatDuration } from '../lib/format'
@@ -19,6 +20,12 @@ interface Props {
   visOn: boolean
   /** selectable beat-map mode */
   beatMode: BeatMode
+  /** manual beat calibration (null = auto) */
+  calBpm: number | null
+  calFirstBeat: number | null
+  /** 0..1 agreement of independent phase signals (low = suggest calibration) */
+  songPhaseReliability: number | null
+  getCurrentTime: () => number
   onTogglePlay: () => void
   onPrev: () => void
   onNext: () => void
@@ -29,6 +36,47 @@ interface Props {
   onPhaseNudge: (pct: number) => void
   onToggleVisualizer: () => void
   onBeatMode: (m: BeatMode) => void
+  onSetCal: (bpm: number | null, firstBeat: number | null) => void
+  onResetCal: () => void
+}
+
+function TapTempo({
+  onCalibrate,
+  getCurrentTime,
+}: {
+  onCalibrate: (bpm: number | null, firstBeat: number | null) => void
+  getCurrentTime: () => number
+}) {
+  const [taps, setTaps] = useState<number[]>([])
+  const lastTapRef = useRef(0)
+
+  const handleTap = () => {
+    const t = getCurrentTime()
+    const now = performance.now()
+    setTaps((prev) => (now - lastTapRef.current > 2000 ? [t] : [...prev, t]))
+    lastTapRef.current = now
+  }
+
+  useEffect(() => {
+    if (taps.length < 4) return
+    const ivs = taps.slice(1).map((x, i) => x - taps[i]).filter((x) => x > 0.1)
+    if (ivs.length >= 2) {
+      const sorted = [...ivs].sort((a, b) => a - b)
+      const period = sorted[Math.floor(sorted.length / 2)] // median
+      onCalibrate(Math.round(60 / period), Math.max(0, Math.round(taps[0] * 1000) / 1000))
+    }
+    setTaps([])
+  }, [taps, onCalibrate])
+
+  return (
+    <button
+      onClick={handleTap}
+      className="rounded bg-line px-2 py-1 text-white/70 hover:text-white"
+      title="跟着音乐拍子点按 4 下，自动计算 BPM 和首拍"
+    >
+      👆 点按打拍（{taps.length}/4）
+    </button>
+  )
 }
 
 export function PlayerBar(p: Props) {
@@ -205,6 +253,66 @@ export function PlayerBar(p: Props) {
           <span className="text-white/25">
             {BEAT_MODES.find((m) => m.id === p.beatMode)?.desc}
           </span>
+          {p.songPhaseReliability != null && p.songPhaseReliability < 0.6 && (
+            <span className="rounded bg-amber-500/15 px-2 py-0.5 text-amber-400" title="两个独立信号对拍点相位判断不一致，自动对齐可能不准，建议手动校准">
+              ⚠ 相位可靠性低
+            </span>
+          )}
+        </div>
+
+        {/* manual beat calibration */}
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line/60 pt-2 text-xs text-white/50">
+          <span>校准</span>
+          <TapTempo onCalibrate={p.onSetCal} getCurrentTime={p.getCurrentTime} />
+          <span className="flex items-center gap-1">
+            BPM
+            <input
+              type="number"
+              min={40}
+              max={320}
+              value={p.calBpm ?? ''}
+              placeholder={p.calBpm == null ? '自动' : undefined}
+              onChange={(e) => {
+                const v = Number(e.target.value)
+                if (Number.isFinite(v) && v >= 40 && v <= 320) p.onSetCal(v, null)
+              }}
+              className="w-16 rounded-md border border-line bg-ink px-2 py-1 text-white outline-none focus:border-run"
+            />
+          </span>
+          <button
+            onClick={() => p.onSetCal(null, Math.max(0, Math.round(p.getCurrentTime() * 1000) / 1000))}
+            className="rounded bg-line px-2 py-1 text-white/70 hover:text-white"
+            title="把当前播放位置设为第 1 拍，整条拍点网格从这里开始"
+          >
+            设首拍
+          </button>
+          {p.calFirstBeat != null && (
+            <span className="flex items-center gap-1">
+              首拍 {p.calFirstBeat.toFixed(2)}s
+              <button
+                className="rounded bg-line px-1.5 py-0.5 text-white/70 hover:text-white"
+                onClick={() => p.onSetCal(null, Math.max(0, p.calFirstBeat! - 0.02))}
+              >
+                −
+              </button>
+              <button
+                className="rounded bg-line px-1.5 py-0.5 text-white/70 hover:text-white"
+                onClick={() => p.onSetCal(null, p.calFirstBeat! + 0.02)}
+              >
+                +
+              </button>
+            </span>
+          )}
+          {(p.calBpm != null || p.calFirstBeat != null) && (
+            <button
+              onClick={p.onResetCal}
+              className="rounded bg-line px-2 py-1 text-amber-400 hover:text-amber-300"
+              title="恢复自动检测的拍点"
+            >
+              复位
+            </button>
+          )}
+          <span className="text-white/25">校准即时生效，边听边调</span>
         </div>
         {p.visualizer}
       </div>

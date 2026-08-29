@@ -56,6 +56,20 @@ export default function App() {
     const v = localStorage.getItem('runbpm.beatMode') ?? 'grid'
     return BEAT_MODES.some((m) => m.id === v) ? (v as BeatMode) : 'grid'
   })
+  // Manual beat calibration (null = use auto-detected map).
+  const [calBpm, setCalBpm] = useState<number | null>(null)
+  const [calFirstBeat, setCalFirstBeat] = useState<number | null>(null)
+
+  // Reset manual calibration when the song changes.
+  useEffect(() => {
+    setCalBpm(null)
+    setCalFirstBeat(null)
+  }, [currentIndex])
+
+  const onSetCal = useCallback((bpm: number | null, firstBeat: number | null) => {
+    if (bpm != null) setCalBpm(bpm)
+    if (firstBeat != null) setCalFirstBeat(firstBeat)
+  }, [])
 
   // Stable accessors (identity must not change per render — otherwise the
   // visualizer's rAF/timer effects would tear down and restart constantly).
@@ -297,6 +311,8 @@ export default function App() {
     const off = item?.song.beat_offset
     const srcBpm = item?.song.original_bpm
     // Click source priority for the selected beat mode:
+    //  0. MANUAL calibration (tap tempo / user BPM / user first beat) —
+    //     regenerates the grid client-side, applies instantly
     //  1. the stretched file's OWN map for this mode (ground truth of what
     //     actually plays — captures atempo's tiny ratio error too)
     //  2. the original song's map for this mode, converted to the stretched
@@ -306,16 +322,29 @@ export default function App() {
     let phase: number | null = null
     if (item && srcBpm != null && srcBpm > 0) {
       const ratio = targetBpm / srcBpm
-      const fromProcessed = item.processedBeatMaps?.[beatMode] ?? (beatMode === 'grid' ? item.processedBeatTimes : null)
-      if (fromProcessed && fromProcessed.length >= 2) {
-        beatMap = fromProcessed
-      } else {
-        const fromSong = beatMode === 'grid' ? item.song.beat_times : item.song.beat_maps?.[beatMode]
-        if (fromSong && fromSong.length >= 2) {
-          beatMap = fromSong.map((t) => t / ratio)
-        } else if (off != null) {
-          phase = ((off * srcBpm) / targetBpm) % (60 / targetBpm)
-        }
+      const auto =
+        item.processedBeatMaps?.[beatMode] ??
+        (beatMode === 'grid' ? item.processedBeatTimes : null)
+      const fromSong =
+        beatMode === 'grid' ? item.song.beat_times : item.song.beat_maps?.[beatMode]
+      if (calBpm != null || calFirstBeat != null) {
+        // Manual grid from (BPM, first beat); keep the auto rate when only
+        // one of the two is set.
+        const autoMap = auto ?? (fromSong ? fromSong.map((t) => t / ratio) : null)
+        const autoRate = autoMap
+          ? (autoMap[autoMap.length - 1] - autoMap[0]) / Math.max(1, autoMap.length - 1)
+          : 60 / targetBpm
+        const period = calBpm != null ? 60 / calBpm : autoRate
+        const anchor = calFirstBeat ?? (autoMap ? autoMap[0] : 0)
+        const dur = audioRef.current?.duration ?? 600
+        const count = Math.max(2, Math.ceil((dur - anchor) / period) + 1)
+        beatMap = Array.from({ length: count }, (_, k) => anchor + k * period)
+      } else if (auto && auto.length >= 2) {
+        beatMap = auto
+      } else if (fromSong && fromSong.length >= 2) {
+        beatMap = fromSong.map((t) => t / ratio)
+      } else if (off != null) {
+        phase = ((off * srcBpm) / targetBpm) % (60 / targetBpm)
       }
     }
     m.setBeatMap(beatMap)
@@ -328,7 +357,7 @@ export default function App() {
     // Record scheduled clicks for the visualizer; clear on song change.
     const unsub = m.onClick((t) => clicksRef.current.push(t))
     return () => unsub()
-  }, [targetBpm, metronomeVolume, metronomeOn, phaseNudge, beatMode, currentIndex, playlist])
+  }, [targetBpm, metronomeVolume, metronomeOn, phaseNudge, beatMode, calBpm, calFirstBeat, currentIndex, playlist])
 
   useEffect(() => {
     const m = metronomeRef.current
@@ -464,6 +493,15 @@ export default function App() {
           onBeatMode={(m) => {
             setBeatMode(m)
             localStorage.setItem('runbpm.beatMode', m)
+          }}
+          calBpm={calBpm}
+          calFirstBeat={calFirstBeat}
+          songPhaseReliability={curItem?.song.phase_reliability ?? null}
+          getCurrentTime={getCurrentTime}
+          onSetCal={onSetCal}
+          onResetCal={() => {
+            setCalBpm(null)
+            setCalFirstBeat(null)
           }}
           onTogglePlay={() => {
             const audio = audioRef.current

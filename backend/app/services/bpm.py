@@ -42,6 +42,7 @@ class BpmResult:
     beat_offset: float | None = None  # seconds of the first detected beat (original timeline)
     beat_times: list[float] | None = None  # default beat map = "grid" mode
     beat_maps: dict[str, list[float]] | None = None  # all selectable modes
+    phase_reliability: float = 0.0  # 0..1 agreement between independent signals
 
 
 def _onset_ac(onset_env: np.ndarray) -> np.ndarray:
@@ -121,13 +122,81 @@ def _strongest_onset(onset_env: np.ndarray, center: float, win: float) -> float:
     return float(m)
 
 
+def _periodic_phase(env: np.ndarray, P: float, step: float = 0.5) -> float:
+    """Frame-phase in [0, P) maximizing energy at phase + k*P over the span.
+
+    Robust to loud subdivisions (hi-hats/backbeats): instead of trusting a
+    per-beat "strongest onset", it evaluates every candidate phase against the
+    total energy of ALL beats, picking the one that sits on the most beat
+    energy. Parabolic refinement on the energy-vs-phase curve.
+    """
+    f0, f1 = 0.0, float(env.shape[0])
+    kk = np.arange(int(np.floor((f0 - P) / P)), int(np.ceil((f1 + P) / P)) + 1)
+    best_phi, best_e = 0.0, -1.0
+    for phi in np.arange(0.0, P, step):
+        idx = np.round(phi + kk * P).astype(int)
+        idx = idx[(idx >= 0) & (idx < env.shape[0])]
+        if idx.size == 0:
+            continue
+        e = float(np.sum(env[idx]))
+        if e > best_e:
+            best_e, best_phi = e, phi
+    cands = np.arange(best_phi - 1.0, best_phi + 1.01, 0.25)
+    vals = np.empty(cands.size)
+    for i, phi in enumerate(cands):
+        p = phi if phi >= 0 else phi + P
+        idx = np.round(p + kk * P).astype(int)
+        idx = idx[(idx >= 0) & (idx < env.shape[0])]
+        vals[i] = float(np.sum(env[idx])) if idx.size else 0.0
+    i = int(np.argmax(vals))
+    phi = cands[i]
+    if 0 < i < cands.size - 1:
+        y0, y1, y2 = vals[i - 1], vals[i], vals[i + 1]
+        denom = y0 - 2 * y1 + y2
+        if abs(denom) > 1e-12:
+            phi = cands[i] + 0.5 * (y0 - y2) / denom
+    return float(phi) % P
+
+
+def _rms_env(y: np.ndarray, hop: int = HOP) -> np.ndarray:
+    """Time-domain RMS energy envelope on the same frame grid (independent
+    signal used to cross-validate the beat phase)."""
+    n = y.shape[0]
+    frames = n // hop
+    rms = np.empty(frames)
+    for i in range(frames):
+        seg = y[i * hop : (i + 1) * hop]
+        rms[i] = float(np.sqrt(np.mean(seg * seg)))
+    mx = float(np.max(rms)) if rms.size else 0.0
+    if mx > 0:
+        rms = rms / mx
+    return rms
+
+
+def _phase_reliability(onset_env: np.ndarray, y: np.ndarray, P: float) -> float:
+    """0..1 agreement between spectral-flux and time-domain-RMS phase picks.
+
+    Large disagreement (|phi_flux - phi_rms| > ~25% of the period) means the
+    song's energy structure is ambiguous (backbeat/subdivision dominant) and
+    automatic phase anchoring is unreliable — the UI should suggest manual
+    calibration for such songs.
+    """
+    try:
+        phi_f = _periodic_phase(onset_env, P)
+        phi_r = _periodic_phase(_rms_env(y), P)
+        d = min(abs(phi_f - phi_r), P - abs(phi_f - phi_r))
+        return float(np.clip(1.0 - d / (0.25 * P), 0.0, 1.0))
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
 def _beat_grid(onset_env: np.ndarray, frames: np.ndarray) -> tuple[np.ndarray, float, float]:
     """Shared grid computation for all beat-map modes.
 
     Returns (grid, P, phi) in FRAME units, where:
       grid  regular beat grid        phi + k*P
       P     robust beat period       median of dominant-onset spacings
-      phi   onset-anchored phase     median(nearest - k*P)
+      phi   phase from the periodic energy search (robust to subdivisions)
     """
     f = np.asarray(frames, dtype=float)
     diffs = np.diff(f)
@@ -152,7 +221,9 @@ def _beat_grid(onset_env: np.ndarray, frames: np.ndarray) -> tuple[np.ndarray, f
     if not (P > 2.0):
         P = P0
 
-    phi = float(np.median(nearest - k_idx * P))
+    # Phase via periodic energy search: robust to loud subdivisions that would
+    # fool a per-beat "strongest onset" picker.
+    phi = _periodic_phase(onset_env, P)
     start_k = int(np.floor((f[0] - phi) / P))
     end_k = int(np.ceil((f[-1] - phi) / P))
     kk = np.arange(start_k, end_k + 1)
@@ -363,6 +434,12 @@ def analyze_bpm(path: Path) -> BpmResult:
         beat_times = beat_maps["grid"]
         beat_offset = beat_times[0]
 
+    # Phase reliability: do two independent signals (spectral flux vs
+    # time-domain RMS) agree on where the beats sit?
+    phase_reliability = 0.0
+    if bpm and bpm > 0:
+        phase_reliability = _phase_reliability(onset_env, y, (60.0 / bpm) * sr / HOP)
+
     duration = None
     try:
         duration = float(librosa.get_duration(path=str(path)))
@@ -373,4 +450,5 @@ def analyze_bpm(path: Path) -> BpmResult:
         bpm=bpm, confidence=confidence, duration=duration,
         octave_corrected=octave_corrected, beat_offset=beat_offset,
         beat_times=beat_times, beat_maps=beat_maps,
+        phase_reliability=phase_reliability,
     )

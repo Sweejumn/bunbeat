@@ -45,6 +45,7 @@ def init_db() -> None:
                 beat_offset   REAL,
                 beat_times    TEXT,
                 beat_maps     TEXT,
+                phase_reliability REAL,
                 file_path     TEXT NOT NULL,
                 mime_type     TEXT,
                 size          INTEGER NOT NULL DEFAULT 0,
@@ -81,6 +82,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE songs ADD COLUMN beat_times TEXT")
     if "beat_maps" not in cols:
         conn.execute("ALTER TABLE songs ADD COLUMN beat_maps TEXT")
+    if "phase_reliability" not in cols:
+        conn.execute("ALTER TABLE songs ADD COLUMN phase_reliability REAL")
     tcols = {row[1] for row in conn.execute("PRAGMA table_info(processing_tasks)")}
     if "processed_bpm" not in tcols:
         conn.execute("ALTER TABLE processing_tasks ADD COLUMN processed_bpm REAL")
@@ -132,7 +135,7 @@ def update_song(song_id: str, **fields: Any) -> dict[str, Any] | None:
     allowed = {
         "title", "artist", "duration", "original_bpm", "bpm_confidence",
         "bpm_status", "bpm_error", "beat_offset", "beat_times", "beat_maps",
-        "file_path", "mime_type", "size",
+        "phase_reliability", "file_path", "mime_type", "size",
     }
     cols = [k for k in fields if k in allowed]
     if not cols:
