@@ -1,0 +1,23 @@
+# --- Python / backend ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+backend/data/
+backend/*.log
+
+# --- Node / frontend ---
+node_modules/
+frontend/dist/
+*.local
+
+# --- runtime artifacts ---
+tmp_task.json
+backend/scripts/_show_recs.py
+backend/scripts/_debug_*.py
+
+# --- misc ---
+.DS_Store
+Thumbs.db
+*.tmp
