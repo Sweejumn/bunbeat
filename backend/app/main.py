@@ -5,6 +5,7 @@ Start with:  uvicorn app.main:app --host 127.0.0.1 --port 8000
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -38,8 +39,31 @@ async def lifespan(app: FastAPI):
     tasks.process_queue.start()
     ffmpeg_ok = ffmpeg_available()
     logger.info("RunBPM v%s started | ffmpeg: %s", APP_VERSION, "OK" if ffmpeg_ok else "MISSING")
+    diag_task = asyncio.create_task(_diagnostics_loop())
     yield
-    # Nothing to clean up: sqlite WAL + worker queues exit with the process.
+    diag_task.cancel()
+
+
+async def _diagnostics_loop(interval: float = 30.0) -> None:
+    """Periodic resource health log: background queues, task counts and
+    process CPU/memory. Helps locate runaway work if the machine freezes."""
+    import psutil
+
+    proc = psutil.Process()
+    while True:
+        try:
+            proc.cpu_percent(None)  # prime the counter
+            cpu = proc.cpu_percent(None)
+            mem = proc.memory_info().rss / 1024 / 1024
+            counts = database._counts_by_status()
+            logger.info(
+                "diag | cpu=%.0f%% mem=%.0fMB | queues: analyze=%d process=%d | tasks: %s",
+                cpu, mem, tasks.analysis_queue.pending, tasks.process_queue.pending,
+                " ".join(f"{k}={v}" for k, v in sorted(counts.items())),
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("diagnostics loop error")
+        await asyncio.sleep(interval)
 
 
 app = FastAPI(title="RunBPM", version=APP_VERSION, lifespan=lifespan)

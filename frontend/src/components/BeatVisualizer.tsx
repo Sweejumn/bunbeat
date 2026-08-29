@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 /**
  * Scrolling beat ruler for debugging metronome alignment.
@@ -7,9 +7,16 @@ import { useEffect, useRef } from 'react'
  *   预期   the ORIGINAL song's beats mapped onto the stretched timeline
  *          (dim) — where the old fixed-grid approach clicked
  *   实际   the stretched file's own detected beats (green) — what the
- *          metronome now clicks on
- *   点击   live metronome clicks recorded via `clicksRef` (amber dots)
- * Any drift/jitter/wobble between the rows is exactly what the user hears.
+ *          metronome clicks on
+ *   点击   live metronome clicks (amber dots), bounded to the visible window
+ *
+ * Resource-safety notes (a previous version froze the whole system):
+ *  - click dots are React-rendered and filtered to the visible window only;
+ *    older clicks are dropped (and trimmed from the source array), so the
+ *    DOM and the composited layer stay bounded;
+ *  - the per-frame rAF loop only updates CSS transforms (no node creation);
+ *  - the component is remounted per song via `key`, so its timers and
+ *    listeners always have a cleanup path.
  */
 interface Props {
   predicted: number[] // processed-timeline seconds
@@ -20,7 +27,8 @@ interface Props {
 
 const PX = 70 // pixels per second
 const CENTER = 180
-const VISIBLE = 5 // seconds either side of the playhead
+const WINDOW = 5 // seconds each side of the playhead
+const CLICK_LOOKAHEAD = 1.5 // also show clicks slightly ahead of the playhead
 
 function TickRow({ times, color, label, refCb }: {
   times: number[]
@@ -48,40 +56,38 @@ export function BeatVisualizer({ predicted, actual, getCurrentTime, clicksRef }:
   const predRef = useRef<HTMLDivElement | null>(null)
   const actRef = useRef<HTMLDivElement | null>(null)
   const clickRowRef = useRef<HTMLDivElement | null>(null)
-  const renderedClicks = useRef(0)
+  const [visibleClicks, setVisibleClicks] = useState<number[]>([])
 
+  // Scroll: per-frame transform updates only — no DOM creation.
   useEffect(() => {
     let raf = 0
     const loop = () => {
-      const now = getCurrentTime()
-      const off = CENTER - now * PX
+      const off = CENTER - getCurrentTime() * PX
       if (predRef.current) predRef.current.style.transform = `translateX(${off}px)`
       if (actRef.current) actRef.current.style.transform = `translateX(${off}px)`
-      const clickRow = clickRowRef.current
-      if (clickRow) {
-        clickRow.style.transform = `translateX(${off}px)`
-        // append dots for newly scheduled clicks (stable DOM, no re-render)
-        const clicks = clicksRef.current
-        for (let i = renderedClicks.current; i < clicks.length; i++) {
-          const dot = document.createElement('div')
-          dot.className = 'absolute top-0 h-full w-[5px] rounded-full bg-accent'
-          dot.style.left = `${clicks[i] * PX - 2.5}px`
-          clickRow.appendChild(dot)
-        }
-        renderedClicks.current = clicks.length
-      }
+      if (clickRowRef.current) clickRowRef.current.style.transform = `translateX(${off}px)`
       raf = requestAnimationFrame(loop)
     }
     raf = requestAnimationFrame(loop)
     return () => cancelAnimationFrame(raf)
-  }, [getCurrentTime, clicksRef])
+  }, [getCurrentTime])
 
-  // reset click markers when the song changes (component key remounts anyway)
+  // Click dots: bounded to the visible window; source array trimmed so it
+  // cannot grow without bound during long sessions.
   useEffect(() => {
-    renderedClicks.current = 0
-    const row = clickRowRef.current
-    if (row) row.replaceChildren()
-  }, [predicted, actual])
+    const iv = window.setInterval(() => {
+      const now = getCurrentTime()
+      const min = now - WINDOW
+      const max = now + CLICK_LOOKAHEAD
+      const clicks = clicksRef.current
+      setVisibleClicks(clicks.filter((t) => t >= min && t <= max))
+      // Drop clicks that scrolled out long ago (never needed again).
+      if (clicks.length > 100 && clicks[0] < min - 5) {
+        clicksRef.current = clicks.filter((t) => t >= min - 5)
+      }
+    }, 250)
+    return () => window.clearInterval(iv)
+  }, [getCurrentTime, clicksRef])
 
   return (
     <div className="mt-2 overflow-hidden rounded-lg border border-line bg-ink/60">
@@ -90,7 +96,15 @@ export function BeatVisualizer({ predicted, actual, getCurrentTime, clicksRef }:
         <TickRow times={actual} color="bg-run" label="实际" refCb={(el) => (actRef.current = el)} />
         <div className="relative h-6">
           <span className="absolute left-1 top-0 z-10 text-[10px] leading-6 text-white/35">点击</span>
-          <div ref={clickRowRef} className="absolute inset-y-0 will-change-transform" />
+          <div ref={clickRowRef} className="absolute inset-y-0 will-change-transform">
+            {visibleClicks.map((t) => (
+              <div
+                key={t}
+                className="absolute top-0 h-full w-[5px] rounded-full bg-accent"
+                style={{ left: t * PX - 2.5 }}
+              />
+            ))}
+          </div>
         </div>
         {/* playhead */}
         <div
@@ -102,9 +116,9 @@ export function BeatVisualizer({ predicted, actual, getCurrentTime, clicksRef }:
         <div className="pointer-events-none absolute inset-y-0 w-8 bg-gradient-to-l from-ink to-transparent" style={{ right: 0 }} />
       </div>
       <div className="flex justify-between border-t border-line/40 px-2 py-0.5 text-[10px] text-white/25">
-        <span>← {VISIBLE}s</span>
-        <span>滚动显示 {VISIBLE * 2}s 窗口，中间线 = 当前播放位置</span>
-        <span>{VISIBLE}s →</span>
+        <span>← {WINDOW}s</span>
+        <span>滚动显示 {WINDOW * 2}s 窗口，中间线 = 当前播放位置</span>
+        <span>{WINDOW}s →</span>
       </div>
     </div>
   )

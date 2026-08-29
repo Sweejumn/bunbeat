@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 import { BeatVisualizer } from './components/BeatVisualizer'
 import { ModePicker } from './components/ModePicker'
@@ -7,6 +7,7 @@ import { RecommendPanel } from './components/RecommendPanel'
 import { SongTable } from './components/SongTable'
 import { UploadZone } from './components/UploadZone'
 import { Metronome } from './lib/metronome'
+import { startDiagnostics } from './lib/monitor'
 import type { ModeId, PlaylistItem, ProcessTask, Recommendation, Song } from './types'
 import { MODES } from './types'
 
@@ -50,6 +51,21 @@ export default function App() {
   const pollTimer = useRef<number | null>(null)
   const clicksRef = useRef<number[]>([])
   const [visOn, setVisOn] = useState(false)
+
+  // Stable accessors (identity must not change per render — otherwise the
+  // visualizer's rAF/timer effects would tear down and restart constantly).
+  const getCurrentTime = useCallback(() => audioRef.current?.currentTime ?? 0, [])
+
+  // Runtime diagnostics: logs DOM/heap/fps/pendingClicks every 10s so a
+  // resource runaway is easy to locate next time (see lib/monitor.ts).
+  useEffect(() => {
+    window.__runbpmPendingClicks = () => metronomeRef.current?.pendingCount ?? 0
+    const stop = startDiagnostics()
+    return () => {
+      stop()
+      delete window.__runbpmPendingClicks
+    }
+  }, [])
 
   const showToast = useCallback((msg: string, kind: 'error' | 'ok' = 'ok') => {
     setToast({ msg, kind })
@@ -322,6 +338,23 @@ export default function App() {
   const analyzedCount = songs.filter((s) => s.bpm_status === 'done' || s.bpm_status === 'failed').length
   const inProgress = analyzingCount + queuedCount
 
+  // Beat-ruler data for the current song, memoized per song so the visualizer
+  // never re-renders on every timeupdate (that used to restart its timers and
+  // clear click dots ~4x/sec — a resource runaway).
+  const curItem = currentIndex >= 0 ? playlist[currentIndex] : null
+  const vizData = useMemo(() => {
+    if (!curItem || !curItem.song.original_bpm || curItem.song.original_bpm <= 0) {
+      return { predicted: [] as number[], actual: [] as number[] }
+    }
+    const ratio = targetBpm / curItem.song.original_bpm
+    const predicted = (curItem.song.beat_times ?? []).map((t) => t / ratio)
+    const actual =
+      curItem.processedBeatTimes && curItem.processedBeatTimes.length >= 2
+        ? curItem.processedBeatTimes
+        : predicted
+    return { predicted, actual }
+  }, [curItem, targetBpm])
+
   return (
     <div className="min-h-full pb-44">
       <audio ref={audioRef} className="hidden" />
@@ -390,63 +423,50 @@ export default function App() {
         </footer>
       </main>
 
-      {(() => {
-        const item = currentIndex >= 0 ? playlist[currentIndex] : null
-        const predicted: number[] = []
-        const actual: number[] = []
-        if (item && item.song.original_bpm && item.song.original_bpm > 0) {
-          const ratio = targetBpm / item.song.original_bpm
-          predicted.push(...(item.song.beat_times ?? []).map((t) => t / ratio))
-          actual.push(
-            ...(item.processedBeatTimes && item.processedBeatTimes.length >= 2
-              ? item.processedBeatTimes
-              : predicted),
-          )
-        }
-        return (
-          <PlayerBar
-            item={item}
-            playing={playing}
-            currentTime={currentTime}
-            duration={duration}
-            volume={volume}
-            metronomeOn={metronomeOn}
-            metronomeVolume={metronomeVolume}
-            phaseNudge={phaseNudge}
-            visualizer={
-              visOn && item ? (
-                <BeatVisualizer
-                  predicted={predicted}
-                  actual={actual}
-                  getCurrentTime={() => audioRef.current?.currentTime ?? 0}
-                  clicksRef={clicksRef}
-                />
-              ) : null
-            }
-            visOn={visOn}
-            onToggleVisualizer={() => setVisOn((v) => !v)}
-            onTogglePlay={() => {
-              const audio = audioRef.current
-              if (!audio) return
-              if (audio.paused) void audio.play()
-              else audio.pause()
-            }}
-            onPrev={() => setCurrentIndex((i) => (i - 1 + playlist.length) % playlist.length)}
-            onNext={() => setCurrentIndex((i) => (i + 1) % playlist.length)}
-            onSeek={(t) => {
-              const audio = audioRef.current
-              if (audio) audio.currentTime = t
-            }}
-            onVolume={(v) => setVolume(v)}
-            onMetronome={setMetronomeOn}
-            onMetronomeVolume={setMetronomeVolume}
-            onPhaseNudge={(v) => {
-              setPhaseNudge(v)
-              localStorage.setItem('runbpm.phaseNudge', String(v))
-            }}
-          />
-        )
-      })()}
+      {(() => (
+        <PlayerBar
+          item={curItem}
+          playing={playing}
+          currentTime={currentTime}
+          duration={duration}
+          volume={volume}
+          metronomeOn={metronomeOn}
+          metronomeVolume={metronomeVolume}
+          phaseNudge={phaseNudge}
+          visualizer={
+            visOn && curItem ? (
+              <BeatVisualizer
+                key={curItem.song.id}
+                predicted={vizData.predicted}
+                actual={vizData.actual}
+                getCurrentTime={getCurrentTime}
+                clicksRef={clicksRef}
+              />
+            ) : null
+          }
+          visOn={visOn}
+          onToggleVisualizer={() => setVisOn((v) => !v)}
+          onTogglePlay={() => {
+            const audio = audioRef.current
+            if (!audio) return
+            if (audio.paused) void audio.play()
+            else audio.pause()
+          }}
+          onPrev={() => setCurrentIndex((i) => (i - 1 + playlist.length) % playlist.length)}
+          onNext={() => setCurrentIndex((i) => (i + 1) % playlist.length)}
+          onSeek={(t) => {
+            const audio = audioRef.current
+            if (audio) audio.currentTime = t
+          }}
+          onVolume={(v) => setVolume(v)}
+          onMetronome={setMetronomeOn}
+          onMetronomeVolume={setMetronomeVolume}
+          onPhaseNudge={(v) => {
+            setPhaseNudge(v)
+            localStorage.setItem('runbpm.phaseNudge', String(v))
+          }}
+        />
+      ))()}
 
       {/* toast */}
       {toast && (

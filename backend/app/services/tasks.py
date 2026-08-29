@@ -22,13 +22,23 @@ logger = logging.getLogger(__name__)
 
 
 class TaskQueue:
-    """Serialise N async jobs with `concurrency` workers."""
+    """Serialise N async jobs with `concurrency` workers.
+
+    The pending queue is capped so a buggy caller cannot flood the server
+    with unbounded background work.
+    """
+
+    MAX_PENDING = 300
 
     def __init__(self, name: str, concurrency: int):
         self.name = name
         self.concurrency = concurrency
-        self._queue: asyncio.Queue[Callable[[], Awaitable[None]]] = asyncio.Queue()
+        self._queue: asyncio.Queue[Callable[[], Awaitable[None]]] = asyncio.Queue(maxsize=self.MAX_PENDING)
         self._workers: list[asyncio.Task] = []
+
+    @property
+    def pending(self) -> int:
+        return self._queue.qsize()
 
     def start(self) -> None:
         if self._workers:
@@ -46,9 +56,15 @@ class TaskQueue:
             finally:
                 self._queue.task_done()
 
-    def submit(self, job: Callable[[], Awaitable[None]]) -> None:
+    def submit(self, job: Callable[[], Awaitable[None]]) -> bool:
         self.start()
-        self._queue.put_nowait(job)
+        try:
+            self._queue.put_nowait(job)
+            return True
+        except asyncio.QueueFull:
+            logger.error("[%s] 后台任务队列已满（%d），拒绝新任务——可能存在失控提交",
+                         self.name, self.MAX_PENDING)
+            return False
 
 
 analysis_queue = TaskQueue("analyze", settings.MAX_CONCURRENT_ANALYZE)
@@ -128,10 +144,16 @@ async def run_processing(task_id: str) -> None:
 # --------------------------------------------------------------------------
 
 def enqueue_analysis(song_id: str) -> None:
-    analysis_queue.submit(lambda: run_analysis(song_id))
+    ok = analysis_queue.submit(lambda: run_analysis(song_id))
+    if not ok:
+        # Queue full (runaway submission guard): mark failed so the row does
+        # not hang in 'analyzing' forever.
+        database.update_song(song_id, bpm_status="failed", bpm_error="分析队列已满，请稍后重试")
 
 
 def enqueue_processing(song_id: str, target_bpm: float) -> dict:
     task = database.create_task(song_id, target_bpm)
-    process_queue.submit(lambda: run_processing(task["id"]))
+    ok = process_queue.submit(lambda: run_processing(task["id"]))
+    if not ok:
+        database.update_task(task["id"], status="failed", error="处理队列已满，请稍后重试")
     return task

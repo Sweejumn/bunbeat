@@ -188,3 +188,10 @@ def update_task(task_id: str, **fields: Any) -> dict[str, Any] | None:
     with _conn() as conn:
         conn.execute(f"UPDATE processing_tasks SET {sets}, updated_at = ? WHERE id = ?", (*values, task_id))
     return get_task(task_id)
+
+
+def _counts_by_status() -> dict[str, int]:
+    """Counts of processing tasks per status (for the diagnostics loop)."""
+    with _conn() as conn:
+        rows = conn.execute("SELECT status, count(*) FROM processing_tasks GROUP BY status").fetchall()
+    return {str(r[0]): int(r[1]) for r in rows}

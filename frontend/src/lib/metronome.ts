@@ -99,6 +99,11 @@ export class Metronome {
     return this.enabled
   }
 
+  /** Number of clicks currently scheduled but not yet played (stall probe). */
+  get pendingCount(): number {
+    return this.sources.size
+  }
+
   onPlay(): void {
     if (this.enabled) this.restart()
   }
@@ -210,6 +215,9 @@ export class Metronome {
 
   private scheduleClick(mediaTime: number): void {
     if (!this.ctx) return
+    // Stall protection: if the audio element freezes (buffer underrun) without
+    // a 'waiting' event, pending clicks would otherwise accumulate forever.
+    if (this.sources.size > 300) return
     // Convert media-timeline time to the AudioContext clock, re-anchored at
     // scheduling time so it stays correct across seeks and song changes.
     const when = this.ctx.currentTime + (mediaTime - this.audio.currentTime)
