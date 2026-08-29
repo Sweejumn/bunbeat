@@ -24,12 +24,23 @@ function rawDiffPct(orig: number | null | undefined, target: number): number {
   return Math.abs(orig - target) / orig
 }
 
+/** Processable = not a red ✕, i.e. tempo difference within 12% (matches
+ *  TempoArrow's ✕ threshold). These are the songs that get auto-selected. */
+function isProcessable(orig: number | null | undefined, target: number): boolean {
+  return rawDiffPct(orig, target) * 100 <= 12
+}
+
 export function RecommendPanel({ recs, targetBpm, processing, onSelected, onPlay }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
+  // Auto-select every processable song (skip the ✕ ones automatically).
   useEffect(() => {
-    if (recs) setSelected(new Set(recs.map((r) => r.song.id)))
-  }, [recs])
+    if (recs) {
+      setSelected(
+        new Set(recs.filter((r) => isProcessable(r.song.original_bpm, targetBpm)).map((r) => r.song.id)),
+      )
+    }
+  }, [recs, targetBpm])
 
   // Sort by relative tempo difference (percent), ascending.
   const sorted = useMemo(() => {
@@ -51,7 +62,9 @@ export function RecommendPanel({ recs, targetBpm, processing, onSelected, onPlay
   }
 
   const selectedIds = Array.from(selected)
-  const allSelected = recs.length > 0 && selectedIds.length === recs.length
+  const processable = sorted.filter((r) => isProcessable(r.song.original_bpm, targetBpm))
+  // "全选" means every processable song (✕ songs are never bulk-selected).
+  const allSelected = processable.length > 0 && processable.every((r) => selected.has(r.song.id))
 
   // BPM shown as "155+5" — the target is 155 and +5 is how far this song
   // sits above it; the "差多少" column is gone, only the percent remains.
@@ -86,7 +99,9 @@ export function RecommendPanel({ recs, targetBpm, processing, onSelected, onPlay
         <button
           className="text-xs text-white/50 hover:text-run"
           onClick={() => {
-            const next = allSelected ? new Set<string>() : new Set(recs.map((r) => r.song.id))
+            const next = allSelected
+              ? new Set<string>()
+              : new Set(processable.map((r) => r.song.id))
             setSelected(next)
             onSelected(Array.from(next))
           }}
@@ -155,10 +170,10 @@ export function RecommendPanel({ recs, targetBpm, processing, onSelected, onPlay
           </p>
         )}
         <p className="w-full text-xs text-white/30">
-          图例：<span className="text-run">=</span> 差&lt;3% ·{' '}
-          <span className="text-run">↑/↓</span> 3–5% · <span className="text-amber-400">↑/↓</span>{' '}
-          5–8% · <span className="text-red-400">↑/↓</span> 8–12% ·{' '}
-          <span className="text-red-400">✕</span> &gt;12%
+          已自动勾选可变速歌曲（<span className="text-red-400">✕</span> &gt;12% 不适合变速，默认不选）· 图例：
+          <span className="text-run">=</span> 差&lt;3% · <span className="text-run">↑/↓</span> 3–5% ·{' '}
+          <span className="text-amber-400">↑/↓</span> 5–8% · <span className="text-red-400">↑/↓</span>{' '}
+          8–12% · <span className="text-red-400">✕</span> &gt;12%
         </p>
       </div>
     </section>
