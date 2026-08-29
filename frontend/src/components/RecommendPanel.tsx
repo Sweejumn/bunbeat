@@ -11,10 +11,11 @@ interface Props {
   onPlay: (songIds: string[]) => void
 }
 
-/** Tempo change in percent (relative to the original): |target-orig| / orig * 100 */
-function diffPct(orig: number | null | undefined, target: number): number {
+/** Signed tempo difference in percent (relative to the original):
+ *  + = original sits above the target (must slow down), - = below (speed up). */
+function signedDiffPct(orig: number | null | undefined, target: number): number {
   if (orig == null || orig <= 0) return 0
-  return Math.round((Math.abs(orig - target) / orig) * 1000) / 10
+  return Math.round(((orig - target) / orig) * 1000) / 10
 }
 
 /** Unrounded percent — used for sorting by relative tempo difference. */
@@ -63,12 +64,19 @@ export function RecommendPanel({ recs, targetBpm, processing, onSelected, onPlay
     return `${target}`
   }
 
-  // BPM color follows the same grading as the tempo arrow.
+  // BPM color follows the same grading as the tempo arrow (by absolute diff).
   const bpmColor = (orig: number | null | undefined): string => {
-    const p = diffPct(orig, targetBpm)
+    const p = Math.abs(signedDiffPct(orig, targetBpm))
     if (p < 5) return 'text-run'
     if (p < 8) return 'text-amber-400'
     return 'text-red-400'
+  }
+
+  // Percent with sign: + = above target (slow down), - = below target (speed up).
+  const pctText = (orig: number | null | undefined): string => {
+    const p = signedDiffPct(orig, targetBpm)
+    if (p === 0) return '0%'
+    return `${p > 0 ? '+' : ''}${p}%`
   }
 
   return (
@@ -113,7 +121,7 @@ export function RecommendPanel({ recs, targetBpm, processing, onSelected, onPlay
                 <TempoArrow originalBpm={r.song.original_bpm} targetBpm={targetBpm} />
               </div>
               <div className="w-12 text-right font-mono text-xs text-white/40">
-                {diffPct(r.song.original_bpm, targetBpm)}%
+                {pctText(r.song.original_bpm)}
               </div>
             </li>
           ))}
