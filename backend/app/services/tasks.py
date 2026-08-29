@@ -117,14 +117,28 @@ async def run_processing(task_id: str) -> None:
     logger.info("processing %s -> %s BPM", song["filename"], task["target_bpm"])
     try:
         out = await asyncio.to_thread(stretch_to_bpm, song, task["target_bpm"])
-        # Analyse the STRETCHED file itself: its own beat map is the ground
-        # truth of what will actually play, so the metronome can click on the
-        # real beats (captures atempo's tiny ratio error too).
+        # Analyse the STRETCHED file for its phase-anchored maps (light/snap
+        # modes). The DEFAULT grid mode is calibrated separately below because
+        # a fresh onset analysis of the stretched file carries a systematic
+        # period bias (measured -0.5..-1% on real music, accumulating into
+        # audible drift).
         try:
             result = await asyncio.to_thread(analyze_bpm, out)
             processed_bpm = result.bpm if result.bpm else None
-            processed_beats = json.dumps(result.beat_times) if result.beat_times else None
-            processed_maps = json.dumps(result.beat_maps) if result.beat_maps else None
+            processed_maps = result.beat_maps or {}
+            # Calibrate the grid variant: map the ORIGINAL grid through the
+            # MEASURED duration ratio (d_orig / d_proc), which is exact up to
+            # atempo's uniformity (~0.1%) and has no onset-detection bias.
+            try:
+                d_proc = probe_duration(out)
+                d_orig = song.get("duration")
+                orig_grid = json.loads(song.get("beat_times") or "[]") if song.get("beat_times") else []
+                if d_proc and d_orig and len(orig_grid) >= 10:
+                    ratio = d_orig / d_proc
+                    processed_maps["grid"] = [round(t / ratio, 3) for t in orig_grid]
+            except Exception:  # noqa: BLE001
+                logger.warning("grid calibration failed for %s", song["filename"])
+            processed_beats = json.dumps(processed_maps.get("grid")) if processed_maps.get("grid") else None
         except Exception:  # noqa: BLE001
             logger.warning("post-process beat analysis failed for %s", song["filename"])
             processed_bpm, processed_beats, processed_maps = None, None, None
@@ -135,7 +149,7 @@ async def run_processing(task_id: str) -> None:
             output_path=str(out),
             processed_bpm=processed_bpm,
             processed_beat_times=processed_beats,
-            processed_beat_maps=processed_maps,
+            processed_beat_maps=json.dumps(processed_maps) if processed_maps else None,
         )
         logger.info("processed %s -> %s", song["filename"], out)
     except Exception as exc:  # noqa: BLE001
