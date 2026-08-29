@@ -63,6 +63,14 @@ export function RecommendPanel({ recs, targetBpm, processing, onSelected, onPlay
     return `${target}`
   }
 
+  // BPM color follows the same grading as the tempo arrow.
+  const bpmColor = (orig: number | null | undefined): string => {
+    const p = diffPct(orig, targetBpm)
+    if (p < 5) return 'text-run'
+    if (p < 8) return 'text-amber-400'
+    return 'text-red-400'
+  }
+
   return (
     <section>
       <div className="mb-3 flex items-center justify-between">
@@ -95,7 +103,10 @@ export function RecommendPanel({ recs, targetBpm, processing, onSelected, onPlay
                 <p className="text-xs text-white/40">{r.song.artist}</p>
               </div>
               <div className="hidden text-xs text-white/30 sm:block">{formatDuration(r.song.duration)}</div>
-              <div className="w-16 text-right font-mono text-sm text-run" title={`目标 ${targetBpm} BPM`}>
+              <div
+                className={`w-16 text-right font-mono text-sm ${bpmColor(r.song.original_bpm)}`}
+                title={`目标 ${targetBpm} BPM`}
+              >
                 {bpmText(r.song.original_bpm)}
               </div>
               <div className="w-10 text-center text-sm">
