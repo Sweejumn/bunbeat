@@ -21,6 +21,7 @@ import librosa
 import numpy as np
 
 from ..config import settings
+from .ffmpeg_tools import probe_duration
 
 # Cosmetic: numba emits an "invalid value encountered in cast" warning inside
 # librosa's onset strength on some Windows/numpy combinations.
@@ -120,18 +121,53 @@ def _octave_correct(ac: np.ndarray, sr: int, tempo: float) -> tuple[float, bool]
     return round(best, 1), corrected
 
 
+def _load_audio(path: Path):
+    """Load audio (mono float32 @ ANALYZE_SR, limited to the analysis window).
+
+    soundfile handles wav/flac/ogg/opus/mp3 natively; AAC/M4A is decoded to
+    a temporary WAV via FFmpeg first (the bundled static ffmpeg is used when
+    none is on PATH).
+    """
+    try:
+        return librosa.load(
+            str(path),
+            sr=settings.ANALYZE_SR,
+            mono=True,
+            duration=settings.ANALYZE_DURATION_SECONDS,
+        )
+    except Exception:
+        # Fall back to FFmpeg decode for formats soundfile cannot read.
+        import subprocess
+
+        from .ffmpeg_tools import get_ffmpeg
+
+        tmp_dir = settings.DATA_DIR / "tmp"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        wav = tmp_dir / f"decode_{path.stem}.wav"
+        cmd = [
+            get_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
+            "-i", str(path),
+            "-t", f"{settings.ANALYZE_DURATION_SECONDS}",
+            "-ac", "1", "-ar", str(settings.ANALYZE_SR),
+            str(wav),
+        ]
+        try:
+            subprocess.run(
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=300, check=True,
+            )
+            return librosa.load(str(wav), sr=settings.ANALYZE_SR, mono=True)
+        finally:
+            wav.unlink(missing_ok=True)
+
+
 def analyze_bpm(path: Path) -> BpmResult:
     """Detect BPM (and duration) for an audio file.
 
     Only the first ANALYZE_DURATION_SECONDS are analysed for speed.
     """
     try:
-        y, sr = librosa.load(
-            str(path),
-            sr=settings.ANALYZE_SR,
-            mono=True,
-            duration=settings.ANALYZE_DURATION_SECONDS,
-        )
+        y, sr = _load_audio(path)
     except Exception as exc:  # noqa: BLE001
         return BpmResult(
             bpm=None, confidence=0.0, duration=None,
@@ -174,7 +210,7 @@ def analyze_bpm(path: Path) -> BpmResult:
     try:
         duration = float(librosa.get_duration(path=str(path)))
     except Exception:  # noqa: BLE001
-        duration = float(y.size / sr)
+        duration = probe_duration(path) or float(y.size / sr)
 
     return BpmResult(
         bpm=bpm, confidence=confidence, duration=duration,

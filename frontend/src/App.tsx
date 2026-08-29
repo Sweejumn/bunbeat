@@ -266,6 +266,9 @@ export default function App() {
 
   // ------------------------------------------------------------------ render
   const analyzingCount = songs.filter((s) => s.bpm_status === 'analyzing').length
+  const queuedCount = songs.filter((s) => s.bpm_status === 'pending').length
+  const analyzedCount = songs.filter((s) => s.bpm_status === 'done' || s.bpm_status === 'failed').length
+  const inProgress = analyzingCount + queuedCount
 
   return (
     <div className="min-h-full pb-44">
@@ -282,11 +285,13 @@ export default function App() {
           <div className="text-right text-xs text-white/40">
             {loading ? (
               <span>连接后端…</span>
-            ) : (
+            ) : inProgress > 0 ? (
               <span>
-                {songs.length} 首歌
-                {analyzingCount > 0 && <span className="ml-2 text-run">正在分析 {analyzingCount} 首…</span>}
+                <span className="text-run">正在分析 {analyzedCount} / {songs.length}</span>
+                <span className="ml-1 text-white/30">（剩 {inProgress} 首）</span>
               </span>
+            ) : (
+              <span>{songs.length} 首歌</span>
             )}
           </div>
         </div>
