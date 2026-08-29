@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 import { ModePicker } from './components/ModePicker'
-import { MusicVisualizer } from './components/MusicVisualizer'
 import { PlayerBar } from './components/PlayerBar'
 import { RecommendPanel } from './components/RecommendPanel'
 import { SongTable } from './components/SongTable'
@@ -49,8 +48,6 @@ export default function App() {
   const audioRef = useRef<HTMLAudioElement>(null)
   const metronomeRef = useRef<Metronome | null>(null)
   const pollTimer = useRef<number | null>(null)
-  const clicksRef = useRef<number[]>([])
-  const [visOn, setVisOn] = useState(false)
   // Selectable beat-map mode (固定拍子 default, persisted).
   const [beatMode, setBeatMode] = useState<BeatMode>(() => {
     const v = localStorage.getItem('runbpm.beatMode') ?? 'grid'
@@ -71,40 +68,9 @@ export default function App() {
     if (firstBeat != null) setCalFirstBeat(firstBeat)
   }, [])
 
-  // ------------------------------------------------------------------ audio capture
-  // One MediaElementSource + AnalyserNode for the music visualizer. The audio
-  // element can only have a single MediaElementSource, so create it lazily on
-  // the user's toggle gesture and keep it for the page's lifetime.
-  const analyserRef = useRef<AnalyserNode | null>(null)
-  const ensureVisualizerAnalyser = useCallback((): AnalyserNode | null => {
-    if (analyserRef.current) return analyserRef.current
-    const audio = audioRef.current
-    if (!audio) return null
-    try {
-      const Ctor =
-        window.AudioContext ??
-        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-      if (!Ctor) return null
-      const actx = new Ctor()
-      const src = actx.createMediaElementSource(audio)
-      const analyser = actx.createAnalyser()
-      analyser.fftSize = 2048
-      analyser.smoothingTimeConstant = 0.8
-      src.connect(analyser)
-      analyser.connect(actx.destination)
-      void actx.resume()
-      audio.addEventListener('play', () => void actx.resume())
-      analyserRef.current = analyser
-    } catch (e) {
-      console.warn('music visualizer audio capture failed:', e)
-    }
-    return analyserRef.current
-  }, [])
-
   // Stable accessors (identity must not change per render — otherwise the
-  // visualizer's rAF/timer effects would tear down and restart constantly).
+  // metronome effect would tear down and restart constantly).
   const getCurrentTime = useCallback(() => audioRef.current?.currentTime ?? 0, [])
-  const getPaused = useCallback(() => audioRef.current?.paused ?? true, [])
 
   // Runtime diagnostics: logs DOM/heap/fps/pendingClicks every 10s so a
   // resource runaway is easy to locate next time (see lib/monitor.ts).
@@ -384,9 +350,6 @@ export default function App() {
     m.setPhaseOffset((Math.max(-50, Math.min(50, phaseNudge)) / 100) * (60 / targetBpm))
     m.setVolume(metronomeVolume)
     m.setEnabled(metronomeOn)
-    // Record scheduled clicks for the visualizer; clear on song change.
-    const unsub = m.onClick((t) => clicksRef.current.push(t))
-    return () => unsub()
   }, [targetBpm, metronomeVolume, metronomeOn, phaseNudge, activeBeatMap, currentIndex])
 
   useEffect(() => {
@@ -486,20 +449,6 @@ export default function App() {
           metronomeOn={metronomeOn}
           metronomeVolume={metronomeVolume}
           phaseNudge={phaseNudge}
-          visualizer={
-            visOn && curItem ? (
-              <MusicVisualizer
-                key={curItem.song.id}
-                beats={activeBeatMap ?? []}
-                clicksRef={clicksRef}
-                getCurrentTime={getCurrentTime}
-                getPaused={getPaused}
-                analyser={ensureVisualizerAnalyser()}
-              />
-            ) : null
-          }
-          visOn={visOn}
-          onToggleVisualizer={() => setVisOn((v) => !v)}
           beatMode={beatMode}
           onBeatMode={(m) => {
             setBeatMode(m)

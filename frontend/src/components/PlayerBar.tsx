@@ -1,4 +1,3 @@
-import type { ReactNode } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import type { BeatMode, PlaylistItem } from '../types'
 import { BEAT_MODES } from '../types'
@@ -15,9 +14,6 @@ interface Props {
   metronomeVolume: number
   /** manual phase fine-tune in percent of a beat (-50..50) */
   phaseNudge: number
-  /** optional scrolling beat ruler rendered inside the metronome settings */
-  visualizer: ReactNode
-  visOn: boolean
   /** selectable beat-map mode */
   beatMode: BeatMode
   /** manual beat calibration (null = auto) */
@@ -34,7 +30,6 @@ interface Props {
   onMetronome: (on: boolean) => void
   onMetronomeVolume: (v: number) => void
   onPhaseNudge: (pct: number) => void
-  onToggleVisualizer: () => void
   onBeatMode: (m: BeatMode) => void
   onSetCal: (bpm: number | null, firstBeat: number | null) => void
   onResetCal: () => void
@@ -183,16 +178,6 @@ export function PlayerBar(p: Props) {
           >
             🥁 节拍器
           </button>
-          {/* music visualizer toggle (independent of the metronome) */}
-          <button
-            onClick={p.onToggleVisualizer}
-            className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors ${
-              p.visOn ? 'bg-run text-ink' : 'bg-line text-white/60 hover:text-white'
-            }`}
-            title="音乐可视化：波形 / 频谱 / 拍点 / 点击"
-          >
-            🎵 可视化
-          </button>
         </div>
 
         {/* metronome settings (visible while enabled) */}
@@ -319,7 +304,6 @@ export function PlayerBar(p: Props) {
           <span className="text-white/25">校准即时生效，边听边调</span>
         </div>
         )}
-        {p.visualizer}
       </div>
     </div>
   )
