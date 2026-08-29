@@ -56,6 +56,8 @@ export default function App() {
   // Manual beat calibration (null = use auto-detected map).
   const [calBpm, setCalBpm] = useState<number | null>(null)
   const [calFirstBeat, setCalFirstBeat] = useState<number | null>(null)
+  // Simple beat ruler (default on).
+  const [rulerOn, setRulerOn] = useState(() => localStorage.getItem('runbpm.rulerOn') !== '0')
 
   // Reset manual calibration when the song changes.
   useEffect(() => {
@@ -457,11 +459,19 @@ export default function App() {
           calBpm={calBpm}
           calFirstBeat={calFirstBeat}
           songPhaseReliability={curItem?.song.phase_reliability ?? null}
+          rulerOn={rulerOn}
+          rulerBeats={activeBeatMap ?? []}
           getCurrentTime={getCurrentTime}
           onSetCal={onSetCal}
           onResetCal={() => {
             setCalBpm(null)
             setCalFirstBeat(null)
+          }}
+          onToggleRuler={() => {
+            setRulerOn((v) => {
+              localStorage.setItem('runbpm.rulerOn', v ? '0' : '1')
+              return !v
+            })
           }}
           onTogglePlay={() => {
             const audio = audioRef.current
