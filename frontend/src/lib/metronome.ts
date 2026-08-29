@@ -105,6 +105,9 @@ export class Metronome {
   }
 
   onPlay(): void {
+    // User gesture usually accompanies play — resume so clicks are audible
+    // even when the metronome was enabled before any interaction.
+    void this.ctx?.resume()
     if (this.enabled) this.restart()
   }
 
@@ -227,8 +230,9 @@ export class Metronome {
     const gain = this.ctx.createGain()
     osc.type = 'square'
     osc.frequency.value = 1174 // D6
-    gain.gain.setValueAtTime(this.vol * 0.32, when)
-    gain.gain.exponentialRampToValueAtTime(0.0008, when + 0.06)
+    // Loud, short click: peak = volume * 0.5, 80ms decay.
+    gain.gain.setValueAtTime(this.vol * 0.5, when)
+    gain.gain.exponentialRampToValueAtTime(0.0008, when + 0.08)
     osc.connect(gain)
     gain.connect(this.ctx.destination)
     const entry = { osc, gain }
@@ -242,7 +246,7 @@ export class Metronome {
       }
     }
     osc.start(when)
-    osc.stop(when + 0.08)
+    osc.stop(when + 0.1)
     for (const fn of this.clickListeners) fn(mediaTime)
   }
 }

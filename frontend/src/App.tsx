@@ -38,8 +38,8 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [volume, setVolume] = useState(0.9)
-  const [metronomeOn, setMetronomeOn] = useState(false)
-  const [metronomeVolume, setMetronomeVolume] = useState(0.5)
+  const [metronomeOn, setMetronomeOn] = useState(true) // 默认开启
+  const [metronomeVolume, setMetronomeVolume] = useState(0.7)
   // Manual beat phase fine-tune, in percent of a beat (-50..50), persisted.
   const [phaseNudge, setPhaseNudge] = useState<number>(() => {
     const v = Number(localStorage.getItem('runbpm.phaseNudge') ?? 0)
