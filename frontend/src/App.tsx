@@ -38,6 +38,11 @@ export default function App() {
   const [volume, setVolume] = useState(0.9)
   const [metronomeOn, setMetronomeOn] = useState(false)
   const [metronomeVolume, setMetronomeVolume] = useState(0.5)
+  // Manual beat phase fine-tune, in percent of a beat (-50..50), persisted.
+  const [phaseNudge, setPhaseNudge] = useState<number>(() => {
+    const v = Number(localStorage.getItem('runbpm.phaseNudge') ?? 0)
+    return Number.isFinite(v) ? Math.max(-50, Math.min(50, v)) : 0
+  })
 
   const audioRef = useRef<HTMLAudioElement>(null)
   const metronomeRef = useRef<Metronome | null>(null)
@@ -265,9 +270,11 @@ export default function App() {
     }
     m.setPhase(phase)
     m.setBpm(targetBpm)
+    // Manual nudge: percent of a beat -> seconds, clamped to +/- half beat.
+    m.setPhaseOffset((Math.max(-50, Math.min(50, phaseNudge)) / 100) * (60 / targetBpm))
     m.setVolume(metronomeVolume)
     m.setEnabled(metronomeOn)
-  }, [targetBpm, metronomeVolume, metronomeOn, currentIndex, playlist])
+  }, [targetBpm, metronomeVolume, metronomeOn, phaseNudge, currentIndex, playlist])
 
   useEffect(() => {
     const m = metronomeRef.current
@@ -377,6 +384,11 @@ export default function App() {
         onVolume={(v) => setVolume(v)}
         onMetronome={setMetronomeOn}
         onMetronomeVolume={setMetronomeVolume}
+        phaseNudge={phaseNudge}
+        onPhaseNudge={(v) => {
+          setPhaseNudge(v)
+          localStorage.setItem('runbpm.phaseNudge', String(v))
+        }}
       />
 
       {/* toast */}

@@ -10,6 +10,8 @@ interface Props {
   volume: number
   metronomeOn: boolean
   metronomeVolume: number
+  /** manual phase fine-tune in percent of a beat (-50..50) */
+  phaseNudge: number
   onTogglePlay: () => void
   onPrev: () => void
   onNext: () => void
@@ -17,11 +19,19 @@ interface Props {
   onVolume: (v: number) => void
   onMetronome: (on: boolean) => void
   onMetronomeVolume: (v: number) => void
+  onPhaseNudge: (pct: number) => void
 }
 
 export function PlayerBar(p: Props) {
   const { item } = p
   if (!item) return null
+
+  const nudgeLabel =
+    p.phaseNudge === 0
+      ? '0'
+      : p.phaseNudge < 0
+        ? `${p.phaseNudge}% 提前`
+        : `+${p.phaseNudge}% 滞后`
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-panel/95 backdrop-blur">
@@ -106,18 +116,23 @@ export function PlayerBar(p: Props) {
             />
           </div>
 
-          {/* metronome */}
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => p.onMetronome(!p.metronomeOn)}
-              className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors ${
-                p.metronomeOn ? 'bg-accent text-ink' : 'bg-line text-white/60 hover:text-white'
-              }`}
-              title="节拍器开关"
-            >
-              🥁 节拍器
-            </button>
-            {p.metronomeOn && (
+          {/* metronome toggle */}
+          <button
+            onClick={() => p.onMetronome(!p.metronomeOn)}
+            className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors ${
+              p.metronomeOn ? 'bg-accent text-ink' : 'bg-line text-white/60 hover:text-white'
+            }`}
+            title="节拍器开关"
+          >
+            🥁 节拍器
+          </button>
+        </div>
+
+        {/* metronome settings (visible while enabled) */}
+        {p.metronomeOn && (
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line/60 pt-2 text-xs text-white/50">
+            <span className="flex items-center gap-2">
+              音量
               <input
                 type="range"
                 min={0}
@@ -125,12 +140,35 @@ export function PlayerBar(p: Props) {
                 step={0.05}
                 value={p.metronomeVolume}
                 onChange={(e) => p.onMetronomeVolume(Number(e.target.value))}
-                className="w-16"
-                title="节拍器音量"
+                className="w-24"
               />
-            )}
+            </span>
+            <span className="flex items-center gap-2">
+              相位微调
+              <input
+                type="range"
+                min={-50}
+                max={50}
+                step={1}
+                value={p.phaseNudge}
+                onChange={(e) => p.onPhaseNudge(Number(e.target.value))}
+                className="w-32 accent-[#fbbf24]"
+                title="点击偏早/偏晚时，整体前后移动节拍（最多半个拍距）"
+              />
+              <span className={`w-20 font-mono ${p.phaseNudge !== 0 ? 'text-accent' : 'text-white/40'}`}>
+                {nudgeLabel}
+              </span>
+              {p.phaseNudge !== 0 && (
+                <button
+                  className="rounded bg-line px-2 py-0.5 text-white/60 hover:text-white"
+                  onClick={() => p.onPhaseNudge(0)}
+                >
+                  归零
+                </button>
+              )}
+            </span>
           </div>
-        </div>
+        )}
       </div>
     </div>
   )

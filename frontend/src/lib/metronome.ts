@@ -20,6 +20,7 @@ export class Metronome {
   private bpm = 120
   private phase = 0 // media-time seconds at which a beat occurs (grid anchor)
   private phaseKnown = false
+  private phaseOffset = 0 // seconds; positive shifts clicks later (滞后)
   private enabled = false
   private vol = 0.5
   private audio: HTMLAudioElement
@@ -40,6 +41,16 @@ export class Metronome {
     const known = phaseSeconds != null && Number.isFinite(phaseSeconds) && phaseSeconds >= 0
     this.phase = known ? phaseSeconds : 0
     this.phaseKnown = known
+    if (this.enabled) this.restart()
+  }
+
+  /**
+   * Manual fine-tune of the grid position (seconds). Positive = clicks later.
+   * Callers should clamp to +/- half a beat. No-op while free-running (no grid).
+   */
+  setPhaseOffset(offsetSeconds: number): void {
+    if (Math.abs(offsetSeconds - this.phaseOffset) < 1e-9) return
+    this.phaseOffset = offsetSeconds
     if (this.enabled) this.restart()
   }
 
@@ -96,9 +107,10 @@ export class Metronome {
     const interval = 60 / this.bpm
     const now = this.audio.currentTime + 0.03 // small lead against clock read
     if (this.phaseKnown) {
-      // Next grid beat at or after `now`: phase + k*interval.
-      const k = Math.max(0, Math.ceil((now - this.phase) / interval - 1e-9))
-      this.nextTime = this.phase + k * interval
+      // Next grid beat at or after `now`: (phase + offset) + k*interval.
+      const anchor = this.phase + this.phaseOffset
+      const k = Math.max(0, Math.ceil((now - anchor) / interval - 1e-9))
+      this.nextTime = anchor + k * interval
       while (this.nextTime < now) this.nextTime += interval
     } else {
       this.nextTime = now

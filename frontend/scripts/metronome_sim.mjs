@@ -19,6 +19,7 @@ class SimMetronome {
     this.bpm = 165
     this.phase = 0
     this.phaseKnown = false
+    this.phaseOffset = 0
     this.enabled = false
     this.nextTime = 0
     this.scheduled = [] // {mediaTime, ctxTime}
@@ -29,6 +30,10 @@ class SimMetronome {
     this.phaseKnown = p != null
     if (this.enabled) this.restart()
   }
+  setPhaseOffset(o) {
+    this.phaseOffset = o
+    if (this.enabled) this.restart()
+  }
   setEnabled(on) {
     this.enabled = on
     if (on) this.restart()
@@ -37,8 +42,9 @@ class SimMetronome {
     const interval = 60 / this.bpm
     const now = this.audio.currentTime + 0.03
     if (this.phaseKnown) {
-      const k = Math.max(0, Math.ceil((now - this.phase) / interval - 1e-9))
-      this.nextTime = this.phase + k * interval
+      const anchor = this.phase + this.phaseOffset
+      const k = Math.max(0, Math.ceil((now - anchor) / interval - 1e-9))
+      this.nextTime = anchor + k * interval
       while (this.nextTime < now) this.nextTime += interval
     } else {
       this.nextTime = now
@@ -158,6 +164,28 @@ m.setPhase(null)
 m.setEnabled(true)
 m.play(0.5)
 assert(m.scheduled.length > 0, "free-run mode schedules clicks")
+
+// --- scenario 7: manual phase nudge shifts the grid (positive = later)
+m.scheduled.length = 0
+audio.currentTime = 42.3
+m.setPhase(0.1417)
+m.setPhaseOffset(0.1818) // +50% of a beat at 165 BPM
+m.setEnabled(true)
+m.play(0.6)
+for (const s of m.scheduled) {
+  const off = (s.mediaTime - (0.1417 + 0.1818)) % interval
+  const gridErr = Math.min(Math.abs(off), interval - Math.abs(off))
+  assert(gridErr < 1e-6, `nudged click on (phase+offset) grid (err ${gridErr.toExponential(2)})`)
+}
+// negative nudge shifts earlier
+m.scheduled.length = 0
+m.setPhaseOffset(-0.09)
+m.play(0.6)
+for (const s of m.scheduled) {
+  const off = (s.mediaTime - (0.1417 - 0.09)) % interval
+  const gridErr = Math.min(Math.abs(off), interval - Math.abs(off))
+  assert(gridErr < 1e-6, `negative nudge grid (err ${gridErr.toExponential(2)})`)
+}
 
 console.log(failures === 0 ? "\nRESULT: PASS" : `\nRESULT: FAIL (${failures})`)
 process.exit(failures === 0 ? 0 : 1)
