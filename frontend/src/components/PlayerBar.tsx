@@ -260,14 +260,18 @@ export function PlayerBar(p: Props) {
               <span className={`w-20 font-mono ${p.phaseNudge !== 0 ? 'text-accent' : 'text-white/40'}`}>
                 {nudgeLabel}
               </span>
-              {p.phaseNudge !== 0 && (
-                <button
-                  className="rounded bg-line px-2 py-0.5 text-white/60 hover:text-white"
-                  onClick={() => p.onPhaseNudge(0)}
-                >
-                  归零
-                </button>
-              )}
+              <button
+                onClick={() => p.onPhaseNudge(0)}
+                disabled={p.phaseNudge === 0}
+                className={`rounded px-2 py-0.5 transition-colors ${
+                  p.phaseNudge !== 0
+                    ? 'bg-run text-ink hover:bg-run-dim'
+                    : 'cursor-not-allowed bg-line/50 text-white/25'
+                }`}
+                title="把相位微调归零"
+              >
+                归零
+              </button>
             </span>
           </div>
         )}
