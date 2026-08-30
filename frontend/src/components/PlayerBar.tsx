@@ -356,7 +356,7 @@ export function PlayerBar(p: Props) {
                   : '先点按打拍 8 下，计算出 BPM 后这里才能设置'
               }
             >
-              设置{tapCount > 0 ? `（${tapCount}/8）` : ''}
+              设置（{tapCount}/8）
             </button>
           </div>
 
