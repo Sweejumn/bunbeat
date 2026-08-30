@@ -303,28 +303,8 @@ export function PlayerBar(p: Props) {
         {/* manual beat calibration (metronome-related) */}
         {p.metronomeOn && (
         <div className="mt-2 border-t border-line/60 pt-2 text-xs text-white/50">
-          {/* row 1: tap button — always usable */}
+          {/* row 1: BPM tuning + apply button + first-beat switch (labels removed) */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <span className="flex items-center gap-1">校准</span>
-            <TapBpm
-              onCalibrate={p.onSetCal}
-              getCurrentTime={p.getCurrentTime}
-              onTap={(t) =>
-                setTapMarks((prev) => {
-                  const next = [...prev, t]
-                  // Keep only the most recent 20 marks on the ruler.
-                  return next.length > 20 ? next.slice(next.length - 20) : next
-                })
-              }
-              onComputed={setComputedBpm}
-              onProgress={setTapCount}
-              setFirstBeatOn={setFirstBeatOn}
-            />
-          </div>
-
-          {/* row 2: BPM tuning — manual box unchanged + computed value + apply button */}
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-2">
-            <span className="w-14 shrink-0 text-white/35">调试 BPM</span>
             <span className="flex items-center gap-1">
               BPM
               <input
@@ -358,11 +338,6 @@ export function PlayerBar(p: Props) {
             >
               设置（{tapCount}/8）
             </button>
-          </div>
-
-          {/* row 3: first-beat tuning — switch controls whether taps set it */}
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-2">
-            <span className="w-14 shrink-0 text-white/35">调试首拍</span>
             <button
               onClick={() => setSetFirstBeatOn((v) => !v)}
               className={`rounded px-2 py-1 transition-colors ${
@@ -372,7 +347,7 @@ export function PlayerBar(p: Props) {
             >
               🎯 设首拍 {setFirstBeatOn ? '开' : '关'}
             </button>
-            {p.calFirstBeat != null ? (
+            {p.calFirstBeat != null && (
               <span className="flex items-center gap-1">
                 首拍 {p.calFirstBeat.toFixed(2)}s
                 <button
@@ -388,7 +363,7 @@ export function PlayerBar(p: Props) {
                   +
                 </button>
               </span>
-            ) : null}
+            )}
             {(p.calBpm != null || p.calFirstBeat != null) && (
               <button
                 onClick={p.onResetCal}
@@ -398,6 +373,25 @@ export function PlayerBar(p: Props) {
                 复位
               </button>
             )}
+          </div>
+
+          {/* row 2: tap button — always usable, below the debug rows */}
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-2">
+            <span className="flex items-center gap-1">校准</span>
+            <TapBpm
+              onCalibrate={p.onSetCal}
+              getCurrentTime={p.getCurrentTime}
+              onTap={(t) =>
+                setTapMarks((prev) => {
+                  const next = [...prev, t]
+                  // Keep only the most recent 20 marks on the ruler.
+                  return next.length > 20 ? next.slice(next.length - 20) : next
+                })
+              }
+              onComputed={setComputedBpm}
+              onProgress={setTapCount}
+              setFirstBeatOn={setFirstBeatOn}
+            />
           </div>
         </div>
         )}
