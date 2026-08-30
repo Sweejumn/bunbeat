@@ -331,8 +331,8 @@ export function PlayerBar(p: Props) {
                 type="number"
                 min={40}
                 max={320}
-                value={p.calBpm ?? ''}
-                placeholder={p.calBpm == null ? '自动' : undefined}
+                value={p.calBpm ?? computedBpm ?? ''}
+                placeholder={p.calBpm == null && computedBpm == null ? '自动' : undefined}
                 onChange={(e) => {
                   const v = Number(e.target.value)
                   if (Number.isFinite(v) && v >= 40 && v <= 320) p.onSetCal(v, null)
@@ -352,11 +352,11 @@ export function PlayerBar(p: Props) {
               }`}
               title={
                 computedBpm != null
-                  ? `把打拍计算出的 BPM（${computedBpm}）填入并应用`
+                  ? `把打拍计算出的 BPM（${computedBpm}）应用到校准`
                   : '先点按打拍 8 下，计算出 BPM 后这里才能设置'
               }
             >
-              ✅ 设置 BPM{computedBpm != null ? `（${computedBpm}）` : ''}
+              ✅ 设置 BPM
             </button>
             <span
               className={`font-mono text-sm ${
