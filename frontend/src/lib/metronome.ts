@@ -13,6 +13,31 @@
  *  - Every scheduled click is tracked so disabling/pausing cancels pending
  *    clicks instantly (no "ghost" clicks).
  */
+
+// Immediate tap-tempo feedback click (manual calibration): plays the moment
+// the user taps, independent of the scheduled metronome so it works even when
+// the metronome is off. Higher pitch than the metronome's D6 so your taps are
+// audible separately from the beats you are trying to match.
+let tapCtx: AudioContext | null = null
+export function playTapClick(): void {
+  const Ctor =
+    window.AudioContext ??
+    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+  if (!Ctor) return
+  if (!tapCtx) tapCtx = new Ctor()
+  void tapCtx.resume()
+  const now = tapCtx.currentTime
+  const osc = tapCtx.createOscillator()
+  const gain = tapCtx.createGain()
+  osc.type = 'square'
+  osc.frequency.value = 1568 // G6 — crisp tick, distinct from metronome D6
+  gain.gain.setValueAtTime(0.35, now)
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05)
+  osc.connect(gain)
+  gain.connect(tapCtx.destination)
+  osc.start(now)
+  osc.stop(now + 0.07)
+}
 export class Metronome {
   private ctx: AudioContext | null = null
   private timer: number | null = null

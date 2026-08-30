@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { BeatMode, PlaylistItem } from '../types'
 import { BEAT_MODES } from '../types'
 import { formatBpm, formatDuration } from '../lib/format'
+import { playTapClick } from '../lib/metronome'
 import { TempoArrow } from './TempoArrow'
 import { BeatRuler } from './BeatRuler'
 
@@ -63,6 +64,8 @@ function TapBpm({
   const handleTap = () => {
     const t = getCurrentTime()
     const now = performance.now()
+    // Audible feedback on every tap so calibration works by ear too.
+    playTapClick()
     setTaps((prev) => {
       const next = now - lastTapRef.current > 2000 ? [t] : [...prev, t]
       lastTapRef.current = now
