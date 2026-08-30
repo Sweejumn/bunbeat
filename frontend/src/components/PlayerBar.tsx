@@ -118,10 +118,10 @@ export function PlayerBar(p: Props) {
   const [tapCount, setTapCount] = useState(0)
   // First-beat setting is switch-controlled (default off).
   const [setFirstBeatOn, setSetFirstBeatOn] = useState(false)
-  // Tap-tempo click sound (default on, persisted).
+  // Tap-tempo click sound (default off, persisted).
   const [tapSoundOn, setTapSoundOn] = useState<boolean>(() => {
     const v = localStorage.getItem('runbpm.tapSound')
-    return v === null ? true : v === '1'
+    return v === '1'
   })
 
   // Clear tap marks when the track changes.
