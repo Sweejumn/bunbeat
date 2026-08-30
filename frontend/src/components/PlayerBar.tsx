@@ -213,37 +213,38 @@ export function PlayerBar(p: Props) {
           </button>
         </div>
 
-        {/* volume row: music / metronome / phase — three sliders side by
-            side so phones (where the transport row is too short for a
-            separate music volume) can still adjust all of them */}
-        <div className="mt-2 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-line/60 pt-2 text-xs text-white/50 sm:grid-cols-3">
-          <span className="flex items-center gap-2">
-            <span className="shrink-0">🔊 音乐</span>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.05}
-              value={p.volume}
-              onChange={(e) => p.onVolume(Number(e.target.value))}
-              className="w-full min-w-0"
-              title="音乐音量"
-            />
-          </span>
-          <span className="flex items-center gap-2">
-            <span className="shrink-0">🥁 拍子</span>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.05}
-              value={p.metronomeVolume}
-              onChange={(e) => p.onMetronomeVolume(Number(e.target.value))}
-              className="w-full min-w-0"
-              title="节拍器音量"
-            />
-          </span>
-          <span className="flex items-center gap-2">
+        {/* volume row: 音乐 + 拍子 share one row (on phones two half-width
+            sliders instead of two full rows), 偏差 gets its own row below */}
+        <div className="mt-2 border-t border-line/60 pt-2 text-xs text-white/50">
+          <div className="grid grid-cols-2 gap-x-6">
+            <span className="flex items-center gap-2">
+              <span className="shrink-0">🔊 音乐</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={p.volume}
+                onChange={(e) => p.onVolume(Number(e.target.value))}
+                className="w-full min-w-0"
+                title="音乐音量"
+              />
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="shrink-0">🥁 拍子</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={p.metronomeVolume}
+                onChange={(e) => p.onMetronomeVolume(Number(e.target.value))}
+                className="w-full min-w-0"
+                title="节拍器音量"
+              />
+            </span>
+          </div>
+          <div className="mt-2 flex items-center gap-2">
             <span className="shrink-0">🎯 偏差</span>
             <input
               type="range"
@@ -274,7 +275,7 @@ export function PlayerBar(p: Props) {
             >
               归零
             </button>
-          </span>
+          </div>
         </div>
         {/* beat-mode selector (metronome-related) */}
         {p.metronomeOn && (
