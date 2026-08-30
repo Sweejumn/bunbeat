@@ -214,20 +214,6 @@ export function PlayerBar(p: Props) {
             </button>
           </div>
 
-          {/* volume */}
-          <div className="hidden items-center gap-2 sm:flex">
-            <span className="text-white/50">🔊</span>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.05}
-              value={p.volume}
-              onChange={(e) => p.onVolume(Number(e.target.value))}
-              className="w-20"
-            />
-          </div>
-
           {/* metronome toggle */}
           <button
             onClick={() => p.onMetronome(!p.metronomeOn)}
@@ -250,51 +236,69 @@ export function PlayerBar(p: Props) {
           </button>
         </div>
 
-        {/* metronome settings (visible while enabled) */}
-        {p.metronomeOn && (
-          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line/60 pt-2 text-xs text-white/50">
-            <span className="flex items-center gap-2">
-              音量
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.05}
-                value={p.metronomeVolume}
-                onChange={(e) => p.onMetronomeVolume(Number(e.target.value))}
-                className="w-24"
-              />
+        {/* volume row: music / metronome / phase — three sliders side by
+            side so phones (where the transport row is too short for a
+            separate music volume) can still adjust all of them */}
+        <div className="mt-2 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-line/60 pt-2 text-xs text-white/50 sm:grid-cols-3">
+          <span className="flex items-center gap-2">
+            <span className="shrink-0">🔊 音乐</span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={p.volume}
+              onChange={(e) => p.onVolume(Number(e.target.value))}
+              className="w-full min-w-0"
+              title="音乐音量"
+            />
+          </span>
+          <span className="flex items-center gap-2">
+            <span className="shrink-0">🥁 拍子</span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={p.metronomeVolume}
+              onChange={(e) => p.onMetronomeVolume(Number(e.target.value))}
+              className="w-full min-w-0"
+              title="节拍器音量"
+            />
+          </span>
+          <span className="flex items-center gap-2">
+            <span className="shrink-0">🎯 偏差</span>
+            <input
+              type="range"
+              min={-50}
+              max={50}
+              step={1}
+              value={p.phaseNudge}
+              onChange={(e) => p.onPhaseNudge(Number(e.target.value))}
+              className="w-full min-w-0 accent-[#fbbf24]"
+              title="点击偏早/偏晚时，整体前后移动节拍（最多半个拍距）"
+            />
+            <span
+              className={`w-16 shrink-0 text-right font-mono ${
+                p.phaseNudge !== 0 ? 'text-accent' : 'text-white/40'
+              }`}
+            >
+              {nudgeLabel}
             </span>
-            <span className="flex items-center gap-2">
-              相位微调
-              <input
-                type="range"
-                min={-50}
-                max={50}
-                step={1}
-                value={p.phaseNudge}
-                onChange={(e) => p.onPhaseNudge(Number(e.target.value))}
-                className="w-32 accent-[#fbbf24]"
-                title="点击偏早/偏晚时，整体前后移动节拍（最多半个拍距）"
-              />
-              <span className={`w-20 font-mono ${p.phaseNudge !== 0 ? 'text-accent' : 'text-white/40'}`}>
-                {nudgeLabel}
-              </span>
-              <button
-                onClick={() => p.onPhaseNudge(0)}
-                disabled={p.phaseNudge === 0}
-                className={`rounded px-2 py-0.5 transition-colors ${
-                  p.phaseNudge !== 0
-                    ? 'bg-run text-ink hover:bg-run-dim'
-                    : 'cursor-not-allowed bg-line/50 text-white/25'
-                }`}
-                title="把相位微调归零"
-              >
-                归零
-              </button>
-            </span>
-          </div>
-        )}
+            <button
+              onClick={() => p.onPhaseNudge(0)}
+              disabled={p.phaseNudge === 0}
+              className={`shrink-0 rounded px-1.5 py-0.5 transition-colors ${
+                p.phaseNudge !== 0
+                  ? 'bg-run text-ink hover:bg-run-dim'
+                  : 'cursor-not-allowed bg-line/50 text-white/25'
+              }`}
+              title="把相位微调归零"
+            >
+              归零
+            </button>
+          </span>
+        </div>
         {/* beat-mode selector (metronome-related) */}
         {p.metronomeOn && (
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line/60 pt-2 text-xs text-white/50">

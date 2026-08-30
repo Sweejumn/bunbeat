@@ -230,8 +230,10 @@ export class Metronome {
     const gain = this.ctx.createGain()
     osc.type = 'square'
     osc.frequency.value = 1174 // D6
-    // Loud, short click: peak = volume * 0.5, 80ms decay.
-    gain.gain.setValueAtTime(this.vol * 0.5, when)
+    // Loud, short click: peak = volume * 0.85 (base level raised so the
+    // default 0.5 mid-range slider is clearly audible, with headroom both
+    // ways), 80ms decay.
+    gain.gain.setValueAtTime(this.vol * 0.85, when)
     gain.gain.exponentialRampToValueAtTime(0.0008, when + 0.08)
     osc.connect(gain)
     gain.connect(this.ctx.destination)

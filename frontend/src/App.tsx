@@ -38,7 +38,10 @@ export default function App() {
   const [duration, setDuration] = useState(0)
   const [volume, setVolume] = useState(0.9)
   const [metronomeOn, setMetronomeOn] = useState(true) // 默认开启
-  const [metronomeVolume, setMetronomeVolume] = useState(0.7)
+  // Metronome volume: default 0.5 (slider centered). The audible level is
+  // boosted inside the Metronome itself, so the default sits mid-range with
+  // headroom on both sides instead of pegging the slider.
+  const [metronomeVolume, setMetronomeVolume] = useState(0.5)
   // Manual beat phase fine-tune, in percent of a beat (-50..50), persisted.
   const [phaseNudge, setPhaseNudge] = useState<number>(() => {
     const v = Number(localStorage.getItem('runbpm.phaseNudge') ?? 0)
