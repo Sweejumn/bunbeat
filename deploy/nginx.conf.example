@@ -1,0 +1,35 @@
+# RunBPM 反向代理（可选：用域名 + HTTPS 时）
+# 用法：
+#   sudo apt install -y nginx certbot python3-certbot-nginx
+#   sudo cp deploy/nginx.conf.example /etc/nginx/conf.d/runbpm.conf
+#   sudo nano /etc/nginx/conf.d/runbpm.conf   # 把 你的域名.com 改成真实域名
+#   sudo nginx -t && sudo systemctl reload nginx
+#   # 让后端只监听本机，避免 8000 裸奔：
+#   sudo sed -i 's/python run.py 0.0.0.0/python run.py 127.0.0.1/' /etc/systemd/system/runbpm.service
+#   sudo systemctl daemon-reload && sudo systemctl restart runbpm
+#   sudo ufw allow 80,443/tcp
+#   sudo certbot --nginx -d 你的域名.com
+
+server {
+    listen 80;
+    server_name 你的域名.com;
+
+    # 上传限制要 >= 后端限制（后端默认 100MB）
+    client_max_body_size 200m;
+
+    # 想加访问密码时，去掉下面两行注释，并先执行：
+    #   sudo apt install -y apache2-utils
+    #   sudo htpasswd -c /etc/nginx/runbpm.htpasswd 用户名
+    # auth_basic "RunBPM";
+    # auth_basic_user_file /etc/nginx/runbpm.htpasswd;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # 处理长音频任务时避免代理超时
+        proxy_read_timeout 300s;
+    }
+}
