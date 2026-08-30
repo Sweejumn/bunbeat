@@ -123,13 +123,6 @@ export function RecommendPanel({ recs, targetBpm, processing, onSelected, onPlay
                 }`}
                 title={isSel ? '点击取消选中' : '点击选中'}
               >
-                <span
-                  className={`w-3 shrink-0 text-center text-sm font-bold ${
-                    isSel ? 'text-run' : 'text-transparent'
-                  }`}
-                >
-                  ●
-                </span>
                 <span className="w-6 shrink-0 text-right font-mono text-xs text-white/30">{i + 1}</span>
                 <div className="min-w-0 flex-1">
                   <p
