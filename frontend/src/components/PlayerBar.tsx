@@ -356,7 +356,7 @@ export function PlayerBar(p: Props) {
                   : '先点按打拍 8 下，计算出 BPM 后这里才能设置'
               }
             >
-              ✅ 设置 BPM
+              ✅ 设置
             </button>
             <span
               className={`font-mono text-sm ${
