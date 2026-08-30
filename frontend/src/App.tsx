@@ -375,8 +375,11 @@ export default function App() {
 
   const curItem = currentIndex >= 0 ? playlist[currentIndex] : null
 
+  // Bottom padding reserves room for the fixed player bar so it never
+  // covers page content (tallest on phones: ruler + controls + 3 volume
+  // rows + beat mode + 3 calibration rows).
   return (
-    <div className="min-h-full pb-44">
+    <div className="min-h-full pb-[30rem]">
       <audio ref={audioRef} className="hidden" />
       {/* header */}
       <header className="border-b border-line bg-panel/80 backdrop-blur">
