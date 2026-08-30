@@ -50,6 +50,7 @@ function TapBpm({
   onComputed,
   onProgress,
   setFirstBeatOn,
+  tapSound,
 }: {
   onCalibrate: (bpm: number | null, firstBeat: number | null) => void
   getCurrentTime: () => number
@@ -57,6 +58,7 @@ function TapBpm({
   onComputed: (bpm: number | null) => void
   onProgress: (n: number) => void
   setFirstBeatOn: boolean
+  tapSound: boolean
 }) {
   const [taps, setTaps] = useState<number[]>([])
   const lastTapRef = useRef(0)
@@ -64,8 +66,9 @@ function TapBpm({
   const handleTap = () => {
     const t = getCurrentTime()
     const now = performance.now()
-    // Audible feedback on every tap so calibration works by ear too.
-    playTapClick()
+    // Audible feedback on every tap so calibration works by ear too
+    // (toggleable via the 🔊 音效 switch next to the button).
+    if (tapSound) playTapClick()
     setTaps((prev) => {
       const next = now - lastTapRef.current > 2000 ? [t] : [...prev, t]
       lastTapRef.current = now
@@ -115,6 +118,11 @@ export function PlayerBar(p: Props) {
   const [tapCount, setTapCount] = useState(0)
   // First-beat setting is switch-controlled (default off).
   const [setFirstBeatOn, setSetFirstBeatOn] = useState(false)
+  // Tap-tempo click sound (default on, persisted).
+  const [tapSoundOn, setTapSoundOn] = useState<boolean>(() => {
+    const v = localStorage.getItem('runbpm.tapSound')
+    return v === null ? true : v === '1'
+  })
 
   // Clear tap marks when the track changes.
   useEffect(() => {
@@ -379,23 +387,42 @@ export function PlayerBar(p: Props) {
             )}
           </div>
 
-          {/* row 2: tap button — always usable, below the debug rows */}
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-2">
+          {/* row 2: tap button — always usable, below the debug rows, pushed
+              right so it sits under the thumb on a phone */}
+          <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <span className="flex items-center gap-1">校准</span>
-            <TapBpm
-              onCalibrate={p.onSetCal}
-              getCurrentTime={p.getCurrentTime}
-              onTap={(t) =>
-                setTapMarks((prev) => {
-                  const next = [...prev, t]
-                  // Keep only the most recent 20 marks on the ruler.
-                  return next.length > 20 ? next.slice(next.length - 20) : next
-                })
-              }
-              onComputed={setComputedBpm}
-              onProgress={setTapCount}
-              setFirstBeatOn={setFirstBeatOn}
-            />
+            <span className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setTapSoundOn((s) => {
+                    const n = !s
+                    localStorage.setItem('runbpm.tapSound', n ? '1' : '0')
+                    return n
+                  })
+                }}
+                className={`rounded px-2 py-1 transition-colors ${
+                  tapSoundOn ? 'bg-accent text-ink' : 'bg-line text-white/60 hover:text-white'
+                }`}
+                title="点按打拍时是否播放滴答音效"
+              >
+                🔊 音效 {tapSoundOn ? '开' : '关'}
+              </button>
+              <TapBpm
+                onCalibrate={p.onSetCal}
+                getCurrentTime={p.getCurrentTime}
+                onTap={(t) =>
+                  setTapMarks((prev) => {
+                    const next = [...prev, t]
+                    // Keep only the most recent 20 marks on the ruler.
+                    return next.length > 20 ? next.slice(next.length - 20) : next
+                  })
+                }
+                onComputed={setComputedBpm}
+                onProgress={setTapCount}
+                setFirstBeatOn={setFirstBeatOn}
+                tapSound={tapSoundOn}
+              />
+            </span>
           </div>
         </div>
         )}
