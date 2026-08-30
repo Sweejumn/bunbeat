@@ -112,34 +112,51 @@ export function RecommendPanel({ recs, targetBpm, processing, onSelected, onPlay
 
       <div className="overflow-hidden rounded-xl border border-line bg-panel">
         <ul className="divide-y divide-line">
-          {sorted.map((r, i) => (
-            <li key={r.song.id} className="flex items-center gap-3 px-4 py-3">
-              <input
-                type="checkbox"
-                checked={selected.has(r.song.id)}
-                onChange={() => toggle(r.song.id)}
-                className="size-4 accent-[#34d399]"
-              />
-              <span className="w-6 text-right font-mono text-xs text-white/30">{i + 1}</span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-white">{r.song.title}</p>
-                <p className="text-xs text-white/40">{r.song.artist}</p>
-              </div>
-              <div className="hidden text-xs text-white/30 sm:block">{formatDuration(r.song.duration)}</div>
-              <div
-                className={`w-16 text-right font-mono text-sm ${bpmColor(r.song.original_bpm)}`}
-                title={`目标 ${targetBpm} BPM`}
+          {sorted.map((r, i) => {
+            const isSel = selected.has(r.song.id)
+            return (
+              <li
+                key={r.song.id}
+                onClick={() => toggle(r.song.id)}
+                className={`flex cursor-pointer items-center gap-3 px-4 py-3 transition-colors ${
+                  isSel ? 'bg-run/10' : 'hover:bg-card/60'
+                }`}
+                title={isSel ? '点击取消选中' : '点击选中'}
               >
-                {bpmText(r.song.original_bpm)}
-              </div>
-              <div className="w-10 text-center text-sm">
-                <TempoArrow originalBpm={r.song.original_bpm} targetBpm={targetBpm} />
-              </div>
-              <div className="w-12 text-right font-mono text-xs text-white/40">
-                {pctText(r.song.original_bpm)}
-              </div>
-            </li>
-          ))}
+                <span
+                  className={`w-3 shrink-0 text-center text-sm font-bold ${
+                    isSel ? 'text-run' : 'text-transparent'
+                  }`}
+                >
+                  ●
+                </span>
+                <span className="w-6 shrink-0 text-right font-mono text-xs text-white/30">{i + 1}</span>
+                <div className="min-w-0 flex-1">
+                  <p
+                    className={`truncate text-sm font-medium ${
+                      isSel ? 'text-run' : 'text-white'
+                    }`}
+                  >
+                    {r.song.title}
+                  </p>
+                  <p className="text-xs text-white/40">{r.song.artist}</p>
+                </div>
+                <div className="hidden text-xs text-white/30 sm:block">{formatDuration(r.song.duration)}</div>
+                <div
+                  className={`w-16 text-right font-mono text-sm ${bpmColor(r.song.original_bpm)}`}
+                  title={`目标 ${targetBpm} BPM`}
+                >
+                  {bpmText(r.song.original_bpm)}
+                </div>
+                <div className="w-10 text-center text-sm">
+                  <TempoArrow originalBpm={r.song.original_bpm} targetBpm={targetBpm} />
+                </div>
+                <div className="w-12 text-right font-mono text-xs text-white/40">
+                  {pctText(r.song.original_bpm)}
+                </div>
+              </li>
+            )
+          })}
         </ul>
       </div>
 
