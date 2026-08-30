@@ -357,7 +357,7 @@ export function PlayerBar(p: Props) {
               }`}
               title="开启后，每次点按打拍都会把当前位置设为首拍（默认关闭）"
             >
-              🎯 设首拍 {setFirstBeatOn ? '开' : '关'}
+              🎯 设首拍
             </button>
             {p.calFirstBeat != null && (
               <span className="flex items-center gap-1">
