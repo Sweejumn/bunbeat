@@ -461,6 +461,7 @@ export default function App() {
           calBpm={calBpm}
           calFirstBeat={calFirstBeat}
           songPhaseReliability={curItem?.song.phase_reliability ?? null}
+          rulerBeats={activeBeatMap ?? []}
           getCurrentTime={getCurrentTime}
           onSetCal={onSetCal}
           onResetCal={() => {

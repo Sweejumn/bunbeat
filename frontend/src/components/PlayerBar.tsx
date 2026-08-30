@@ -3,6 +3,7 @@ import type { BeatMode, PlaylistItem } from '../types'
 import { BEAT_MODES } from '../types'
 import { formatBpm, formatDuration } from '../lib/format'
 import { TempoArrow } from './TempoArrow'
+import { BeatRuler } from './BeatRuler'
 
 interface Props {
   item: PlaylistItem | null
@@ -21,6 +22,8 @@ interface Props {
   calFirstBeat: number | null
   /** 0..1 agreement of independent phase signals (low = suggest calibration) */
   songPhaseReliability: number | null
+  /** beat ruler data (always visible, no toggle) */
+  rulerBeats: number[]
   getCurrentTime: () => number
   onTogglePlay: () => void
   onPrev: () => void
@@ -38,9 +41,11 @@ interface Props {
 function TapTempo({
   onCalibrate,
   getCurrentTime,
+  onTap,
 }: {
   onCalibrate: (bpm: number | null, firstBeat: number | null) => void
   getCurrentTime: () => number
+  onTap: (t: number) => void
 }) {
   // Tapping only computes the BPM (no auto-apply); the「设置 BPM」button
   // applies it to the calibration. The first beat is updated on EVERY tap
@@ -55,6 +60,7 @@ function TapTempo({
     const now = performance.now()
     setTaps((prev) => (now - lastTapRef.current > 2000 ? [t] : [...prev, t]))
     lastTapRef.current = now
+    onTap(t)
     // First beat follows EVERY tap while the switch is on (not just the
     // first of the 8): the newest tap is always the current first beat.
     if (setFirstBeat) {
@@ -117,6 +123,13 @@ function TapTempo({
 
 export function PlayerBar(p: Props) {
   const { item } = p
+  const [tapMarks, setTapMarks] = useState<number[]>([])
+
+  // Clear tap marks when the track changes.
+  useEffect(() => {
+    setTapMarks([])
+  }, [item?.song.id])
+
   if (!item) return null
 
   const nudgeLabel =
@@ -129,6 +142,8 @@ export function PlayerBar(p: Props) {
   return (
     <div className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-panel/95 backdrop-blur">
       <div className="mx-auto max-w-5xl px-4 py-3">
+        {/* beat ruler — always visible, no toggle button */}
+        <BeatRuler beats={p.rulerBeats} taps={tapMarks} getCurrentTime={p.getCurrentTime} />
         {/* progress */}
         <div className="flex items-center gap-3">
           <span className="w-12 text-right font-mono text-xs text-white/40">
@@ -303,7 +318,17 @@ export function PlayerBar(p: Props) {
           <span className="flex items-center gap-1">
             校准
           </span>
-          <TapTempo onCalibrate={p.onSetCal} getCurrentTime={p.getCurrentTime} />
+          <TapTempo
+            onCalibrate={p.onSetCal}
+            getCurrentTime={p.getCurrentTime}
+            onTap={(t) =>
+              setTapMarks((prev) => {
+                const next = [...prev, t]
+                // Keep only the most recent 20 marks on the ruler.
+                return next.length > 20 ? next.slice(next.length - 20) : next
+              })
+            }
+          />
           <span className="flex items-center gap-1">
             BPM
             <input
