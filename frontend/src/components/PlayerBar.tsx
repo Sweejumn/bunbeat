@@ -49,9 +49,9 @@ function TapTempo({
   getCurrentTime: () => number
   onTap: (t: number) => void
 }) {
-  // Tapping always computes BPM; it is applied to the calibration only
-  // while the "设首拍" switch is on (default off) — otherwise the result
-  // is just shown for preview.
+  // Tapping only computes the BPM (no auto-apply); the「设置 BPM」button
+  // applies it to the calibration. The first beat is updated on EVERY tap
+  // while the「设首拍」switch is on.
   const [setFirstBeat, setSetFirstBeat] = useState(false)
   const [taps, setTaps] = useState<number[]>([])
   const [computedBpm, setComputedBpm] = useState<number | null>(null)
@@ -63,32 +63,32 @@ function TapTempo({
     setTaps((prev) => (now - lastTapRef.current > 2000 ? [t] : [...prev, t]))
     lastTapRef.current = now
     onTap(t)
+    // First beat follows EVERY tap while the switch is on (not just the
+    // first of the 8): the newest tap is always the current first beat.
+    if (setFirstBeat) {
+      onCalibrate(null, Math.max(0, Math.round(t * 1000) / 1000))
+    }
   }
 
   useEffect(() => {
-    // After 8 taps (median interval): compute BPM. Apply (and set first
-    // beat) only when the switch is on; otherwise just show the result.
+    // After 8 taps (median interval): compute the BPM. It is NOT applied
+    // automatically — the「设置 BPM」button does that when pressed.
     if (taps.length < 8) return
     const ivs = taps.slice(1).map((x, i) => x - taps[i]).filter((x) => x > 0.1)
     if (ivs.length >= 2) {
       const sorted = [...ivs].sort((a, b) => a - b)
       const period = sorted[Math.floor(sorted.length / 2)] // median
-      const bpm = Math.round(60 / period)
-      setComputedBpm(bpm)
-      if (setFirstBeat) {
-        const firstBeat = Math.max(0, Math.round(taps[0] * 1000) / 1000)
-        onCalibrate(bpm, firstBeat)
-      }
+      setComputedBpm(Math.round(60 / period))
     }
     setTaps([])
-  }, [taps, onCalibrate, setFirstBeat])
+  }, [taps])
 
   return (
     <span className="flex items-center gap-1">
       <button
         onClick={handleTap}
         className="rounded bg-line px-2 py-1 text-white/70 hover:text-white"
-        title="跟着音乐拍子点按 8 下，自动计算 BPM；每次点按都会在拍点标尺上留下黄色标记。开关关闭时只预览计算结果，打开时才应用到校准"
+        title="跟着音乐拍子点按 8 下，随时计算 BPM；每次点按都会在拍点标尺上留下黄色标记。打开「设首拍」时，每次点按都会把当前位置设为首拍"
       >
         👆 点按打拍（{taps.length}/8）
       </button>
@@ -97,20 +97,28 @@ function TapTempo({
         className={`rounded px-2 py-1 transition-colors ${
           setFirstBeat ? 'bg-accent text-ink' : 'bg-line text-white/60 hover:text-white'
         }`}
-        title="关闭（默认）：打拍只预览计算出的 BPM，不应用；开启：敲 8 下后同时应用 BPM 并设置首拍"
+        title="开启后，每次打拍都会把当前位置设为首拍（默认关闭）"
       >
         🎯 设首拍 {setFirstBeat ? '开' : '关'}
       </button>
-      {computedBpm != null && (
-        <span
-          className={`rounded px-2 py-1 font-mono text-sm ${
-            setFirstBeat ? 'bg-run/15 text-run' : 'bg-line text-white/60'
-          }`}
-          title={setFirstBeat ? '已应用到校准' : '仅计算预览，开启「设首拍」后重新敲 8 下才会应用'}
-        >
-          ≈{computedBpm} BPM{setFirstBeat ? ' ✓' : '（预览）'}
-        </span>
-      )}
+      <button
+        onClick={() => {
+          if (computedBpm != null) onCalibrate(computedBpm, null)
+        }}
+        disabled={computedBpm == null}
+        className={`rounded px-2 py-1 transition-colors ${
+          computedBpm != null
+            ? 'bg-run text-ink hover:bg-run-dim'
+            : 'cursor-not-allowed bg-line/50 text-white/25'
+        }`}
+        title={
+          computedBpm != null
+            ? `把计算出的 BPM（${computedBpm}）应用到校准`
+            : '先敲满 8 下计算出 BPM'
+        }
+      >
+        ✅ 设置 BPM{computedBpm != null ? `（${computedBpm}）` : ''}
+      </button>
     </span>
   )
 }
