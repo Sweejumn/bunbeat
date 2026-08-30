@@ -336,6 +336,15 @@ export default function App() {
     return null
   }, [currentIndex, playlist, targetBpm, beatMode, calBpm, calFirstBeat])
 
+  // Ruler beats = active beat map shifted by the same manual phase nudge the
+  // metronome uses, so sliding 偏差 moves the green ticks exactly as the
+  // clicks move (what you see is what you hear).
+  const rulerBeats = useMemo(() => {
+    if (!activeBeatMap) return []
+    const offset = (Math.max(-50, Math.min(50, phaseNudge)) / 100) * (60 / targetBpm)
+    return offset === 0 ? activeBeatMap : activeBeatMap.map((t) => t + offset)
+  }, [activeBeatMap, phaseNudge, targetBpm])
+
   // -------------------------------------------------------------- metronome
   useEffect(() => {
     const audio = audioRef.current
@@ -464,7 +473,7 @@ export default function App() {
           calBpm={calBpm}
           calFirstBeat={calFirstBeat}
           songPhaseReliability={curItem?.song.phase_reliability ?? null}
-          rulerBeats={activeBeatMap ?? []}
+          rulerBeats={rulerBeats}
           getCurrentTime={getCurrentTime}
           onSetCal={onSetCal}
           onResetCal={() => {

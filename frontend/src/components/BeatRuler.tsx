@@ -42,9 +42,9 @@ export function BeatRuler({ beats, getCurrentTime, taps = [] }: Props) {
             (the playhead). With inset-y-0 the row collapses to 0px wide and
             every tick lands at the left edge. */}
         <div ref={rowRef} className="absolute inset-0 will-change-transform">
-          {beats.map((t) => (
+          {beats.map((t, i) => (
             <div
-              key={t}
+              key={i}
               className="absolute inset-y-1 w-[2px] rounded bg-run/70"
               style={{ left: t * PX - 1 }}
             />
