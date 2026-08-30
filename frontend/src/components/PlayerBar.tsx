@@ -39,21 +39,23 @@ interface Props {
 }
 
 /** Tap button: always usable, counts 1..8, computes BPM silently. Every tap
- *  re-anchors the first beat directly (no switch needed) and is reported
- *  via onTap for the ruler marks. Tap progress (n/8) is reported via
- *  onProgress so the「调试 BPM」row can show it. */
+ *  is reported via onTap for the ruler marks. Setting the first beat is
+ *  controlled by the「设首拍」switch: while it is ON, every tap directly
+ *  re-anchors the first beat; while OFF, taps never touch the first beat. */
 function TapBpm({
   onCalibrate,
   getCurrentTime,
   onTap,
   onComputed,
   onProgress,
+  setFirstBeatOn,
 }: {
   onCalibrate: (bpm: number | null, firstBeat: number | null) => void
   getCurrentTime: () => number
   onTap: (t: number) => void
   onComputed: (bpm: number | null) => void
   onProgress: (n: number) => void
+  setFirstBeatOn: boolean
 }) {
   const [taps, setTaps] = useState<number[]>([])
   const lastTapRef = useRef(0)
@@ -68,8 +70,10 @@ function TapBpm({
       return next
     })
     onTap(t)
-    // Every tap directly sets the first beat to the tap position.
-    onCalibrate(null, Math.max(0, Math.round(t * 1000) / 1000))
+    // First beat is only touched while the「设首拍」switch is ON.
+    if (setFirstBeatOn) {
+      onCalibrate(null, Math.max(0, Math.round(t * 1000) / 1000))
+    }
   }
 
   useEffect(() => {
@@ -90,7 +94,11 @@ function TapBpm({
     <button
       onClick={handleTap}
       className="rounded-lg bg-line px-4 py-2.5 text-base text-white hover:bg-line/80"
-      title="跟着音乐拍子点按：每次点按都会把当前位置设为首拍，敲满 8 下自动计算 BPM；点按同时在拍点标尺上留下黄色标记"
+      title={
+        setFirstBeatOn
+          ? '开关已开启：每次点按都会把当前位置设为首拍；敲满 8 下自动计算 BPM'
+          : '点按敲 8 下自动计算 BPM（不设首拍）；打开「设首拍」开关后，每次点按都会把当前位置设为首拍'
+      }
     >
       👆 点按打拍
     </button>
@@ -102,6 +110,8 @@ export function PlayerBar(p: Props) {
   const [tapMarks, setTapMarks] = useState<number[]>([])
   const [computedBpm, setComputedBpm] = useState<number | null>(null)
   const [tapCount, setTapCount] = useState(0)
+  // First-beat setting is switch-controlled (default off).
+  const [setFirstBeatOn, setSetFirstBeatOn] = useState(false)
 
   // Clear tap marks when the track changes.
   useEffect(() => {
@@ -308,6 +318,7 @@ export function PlayerBar(p: Props) {
               }
               onComputed={setComputedBpm}
               onProgress={setTapCount}
+              setFirstBeatOn={setFirstBeatOn}
             />
           </div>
 
@@ -356,10 +367,18 @@ export function PlayerBar(p: Props) {
             </span>
           </div>
 
-          {/* row 3: first-beat tuning — fine tune + reset (first beat is set
-              by every tap on row 1) */}
+          {/* row 3: first-beat tuning — switch controls whether taps set it */}
           <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-2">
             <span className="w-14 shrink-0 text-white/35">调试首拍</span>
+            <button
+              onClick={() => setSetFirstBeatOn((v) => !v)}
+              className={`rounded px-2 py-1 transition-colors ${
+                setFirstBeatOn ? 'bg-accent text-ink' : 'bg-line text-white/60 hover:text-white'
+              }`}
+              title="开启后，每次点按打拍都会把当前位置设为首拍（默认关闭）"
+            >
+              🎯 设首拍 {setFirstBeatOn ? '开' : '关'}
+            </button>
             {p.calFirstBeat != null ? (
               <span className="flex items-center gap-1">
                 首拍 {p.calFirstBeat.toFixed(2)}s
@@ -377,7 +396,7 @@ export function PlayerBar(p: Props) {
                 </button>
               </span>
             ) : (
-              <span className="text-white/40">未设置（点按打拍即设置）</span>
+              <span className="text-white/40">未设置（开启开关后点按打拍即设置）</span>
             )}
             {(p.calBpm != null || p.calFirstBeat != null) && (
               <button
@@ -388,7 +407,9 @@ export function PlayerBar(p: Props) {
                 复位
               </button>
             )}
-            <span className="text-white/25">每次点按打拍都会把当前位置设为首拍</span>
+            <span className="text-white/25">
+              {setFirstBeatOn ? '开：每次点按打拍都会设置首拍' : '关：点按打拍不会改动首拍'}
+            </span>
           </div>
         </div>
         )}
