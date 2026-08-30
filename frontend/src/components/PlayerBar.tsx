@@ -359,23 +359,6 @@ export function PlayerBar(p: Props) {
             >
               🎯 设首拍
             </button>
-            {p.calFirstBeat != null && (
-              <span className="flex items-center gap-1">
-                首拍 {p.calFirstBeat.toFixed(2)}s
-                <button
-                  className="rounded bg-line px-1.5 py-0.5 text-white/70 hover:text-white"
-                  onClick={() => p.onSetCal(null, Math.max(0, p.calFirstBeat! - 0.02))}
-                >
-                  −
-                </button>
-                <button
-                  className="rounded bg-line px-1.5 py-0.5 text-white/70 hover:text-white"
-                  onClick={() => p.onSetCal(null, p.calFirstBeat! + 0.02)}
-                >
-                  +
-                </button>
-              </span>
-            )}
             {(p.calBpm != null || p.calFirstBeat != null) && (
               <button
                 onClick={p.onResetCal}
