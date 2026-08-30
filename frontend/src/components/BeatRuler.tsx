@@ -64,9 +64,6 @@ export function BeatRuler({ beats, getCurrentTime, taps = [] }: Props) {
       </div>
       <div className="flex justify-between border-t border-line/40 px-2 py-0.5 text-[10px] text-white/25">
         <span>← 4s</span>
-        <span>
-          绿线 = 拍点 · <span className="text-accent">黄条 = 打拍（{taps.length}）</span> · 穿过中心线即当前拍 · 暂停时静止
-        </span>
         <span>4s →</span>
       </div>
     </div>
