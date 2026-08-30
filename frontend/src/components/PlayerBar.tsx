@@ -395,9 +395,7 @@ export function PlayerBar(p: Props) {
                   +
                 </button>
               </span>
-            ) : (
-              <span className="text-white/40">未设置（开启开关后点按打拍即设置）</span>
-            )}
+            ) : null}
             {(p.calBpm != null || p.calFirstBeat != null) && (
               <button
                 onClick={p.onResetCal}
@@ -407,9 +405,6 @@ export function PlayerBar(p: Props) {
                 复位
               </button>
             )}
-            <span className="text-white/25">
-              {setFirstBeatOn ? '开：每次点按打拍都会设置首拍' : '关：点按打拍不会改动首拍'}
-            </span>
           </div>
         </div>
         )}
