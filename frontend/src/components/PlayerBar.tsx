@@ -40,17 +40,20 @@ interface Props {
 
 /** Tap button: always usable, counts 1..8, computes BPM silently. Every tap
  *  re-anchors the first beat directly (no switch needed) and is reported
- *  via onTap for the ruler marks. */
+ *  via onTap for the ruler marks. Tap progress (n/8) is reported via
+ *  onProgress so the「调试 BPM」row can show it. */
 function TapBpm({
   onCalibrate,
   getCurrentTime,
   onTap,
   onComputed,
+  onProgress,
 }: {
   onCalibrate: (bpm: number | null, firstBeat: number | null) => void
   getCurrentTime: () => number
   onTap: (t: number) => void
   onComputed: (bpm: number | null) => void
+  onProgress: (n: number) => void
 }) {
   const [taps, setTaps] = useState<number[]>([])
   const lastTapRef = useRef(0)
@@ -58,8 +61,12 @@ function TapBpm({
   const handleTap = () => {
     const t = getCurrentTime()
     const now = performance.now()
-    setTaps((prev) => (now - lastTapRef.current > 2000 ? [t] : [...prev, t]))
-    lastTapRef.current = now
+    setTaps((prev) => {
+      const next = now - lastTapRef.current > 2000 ? [t] : [...prev, t]
+      lastTapRef.current = now
+      onProgress(next.length)
+      return next
+    })
     onTap(t)
     // Every tap directly sets the first beat to the tap position.
     onCalibrate(null, Math.max(0, Math.round(t * 1000) / 1000))
@@ -76,15 +83,16 @@ function TapBpm({
       onComputed(Math.round(60 / period))
     }
     setTaps([])
-  }, [taps, onComputed])
+    onProgress(0)
+  }, [taps, onComputed, onProgress])
 
   return (
     <button
       onClick={handleTap}
-      className="rounded bg-line px-2 py-1 text-white/70 hover:text-white"
+      className="rounded-lg bg-line px-4 py-2.5 text-base text-white hover:bg-line/80"
       title="跟着音乐拍子点按：每次点按都会把当前位置设为首拍，敲满 8 下自动计算 BPM；点按同时在拍点标尺上留下黄色标记"
     >
-      👆 点按打拍（{taps.length}/8）
+      👆 点按打拍
     </button>
   )
 }
@@ -93,6 +101,7 @@ export function PlayerBar(p: Props) {
   const { item } = p
   const [tapMarks, setTapMarks] = useState<number[]>([])
   const [computedBpm, setComputedBpm] = useState<number | null>(null)
+  const [tapCount, setTapCount] = useState(0)
 
   // Clear tap marks when the track changes.
   useEffect(() => {
@@ -298,6 +307,7 @@ export function PlayerBar(p: Props) {
                 })
               }
               onComputed={setComputedBpm}
+              onProgress={setTapCount}
             />
           </div>
 
@@ -337,6 +347,13 @@ export function PlayerBar(p: Props) {
             >
               ✅ 设置 BPM{computedBpm != null ? `（${computedBpm}）` : ''}
             </button>
+            <span
+              className={`font-mono text-sm ${
+                tapCount > 0 ? 'text-accent' : 'text-white/30'
+              }`}
+            >
+              敲拍 {tapCount}/8
+            </span>
           </div>
 
           {/* row 3: first-beat tuning — fine tune + reset (first beat is set
