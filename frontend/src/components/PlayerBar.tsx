@@ -38,21 +38,19 @@ interface Props {
   onResetCal: () => void
 }
 
-/** Tap button: always usable, counts 1..8, computes BPM silently.
- *  Every tap is reported via onTap (ruler marks); while firstBeatOn, every
- *  tap also re-anchors the first beat. */
+/** Tap button: always usable, counts 1..8, computes BPM silently. Every tap
+ *  re-anchors the first beat directly (no switch needed) and is reported
+ *  via onTap for the ruler marks. */
 function TapBpm({
   onCalibrate,
   getCurrentTime,
   onTap,
   onComputed,
-  firstBeatOn,
 }: {
   onCalibrate: (bpm: number | null, firstBeat: number | null) => void
   getCurrentTime: () => number
   onTap: (t: number) => void
   onComputed: (bpm: number | null) => void
-  firstBeatOn: boolean
 }) {
   const [taps, setTaps] = useState<number[]>([])
   const lastTapRef = useRef(0)
@@ -63,10 +61,8 @@ function TapBpm({
     setTaps((prev) => (now - lastTapRef.current > 2000 ? [t] : [...prev, t]))
     lastTapRef.current = now
     onTap(t)
-    // First beat follows EVERY tap while the switch is on.
-    if (firstBeatOn) {
-      onCalibrate(null, Math.max(0, Math.round(t * 1000) / 1000))
-    }
+    // Every tap directly sets the first beat to the tap position.
+    onCalibrate(null, Math.max(0, Math.round(t * 1000) / 1000))
   }
 
   useEffect(() => {
@@ -86,7 +82,7 @@ function TapBpm({
     <button
       onClick={handleTap}
       className="rounded bg-line px-2 py-1 text-white/70 hover:text-white"
-      title="跟着音乐拍子点按 8 下，随时计算 BPM；每次点按都会在拍点标尺上留下黄色标记。开启「设首拍」时，每次点按都会把当前位置设为首拍"
+      title="跟着音乐拍子点按：每次点按都会把当前位置设为首拍，敲满 8 下自动计算 BPM；点按同时在拍点标尺上留下黄色标记"
     >
       👆 点按打拍（{taps.length}/8）
     </button>
@@ -97,7 +93,6 @@ export function PlayerBar(p: Props) {
   const { item } = p
   const [tapMarks, setTapMarks] = useState<number[]>([])
   const [computedBpm, setComputedBpm] = useState<number | null>(null)
-  const [firstBeatOn, setFirstBeatOn] = useState(false)
 
   // Clear tap marks when the track changes.
   useEffect(() => {
@@ -303,7 +298,6 @@ export function PlayerBar(p: Props) {
                 })
               }
               onComputed={setComputedBpm}
-              firstBeatOn={firstBeatOn}
             />
           </div>
 
@@ -345,26 +339,11 @@ export function PlayerBar(p: Props) {
             </button>
           </div>
 
-          {/* row 3: first-beat tuning — switch + fine tune + reset */}
+          {/* row 3: first-beat tuning — fine tune + reset (first beat is set
+              by every tap on row 1) */}
           <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-2">
             <span className="w-14 shrink-0 text-white/35">调试首拍</span>
-            <button
-              onClick={() => setFirstBeatOn((v) => !v)}
-              className={`rounded px-2 py-1 transition-colors ${
-                firstBeatOn ? 'bg-accent text-ink' : 'bg-line text-white/60 hover:text-white'
-              }`}
-              title="开启后，每次点按打拍都会把当前位置设为首拍（默认关闭）"
-            >
-              🎯 设首拍 {firstBeatOn ? '开' : '关'}
-            </button>
-            <button
-              onClick={() => p.onSetCal(null, Math.max(0, Math.round(p.getCurrentTime() * 1000) / 1000))}
-              className="rounded bg-line px-2 py-1 text-white/70 hover:text-white"
-              title="把当前播放位置设为第 1 拍，整条拍点网格从这里开始"
-            >
-              设首拍（当前位置）
-            </button>
-            {p.calFirstBeat != null && (
+            {p.calFirstBeat != null ? (
               <span className="flex items-center gap-1">
                 首拍 {p.calFirstBeat.toFixed(2)}s
                 <button
@@ -380,6 +359,8 @@ export function PlayerBar(p: Props) {
                   +
                 </button>
               </span>
+            ) : (
+              <span className="text-white/40">未设置（点按打拍即设置）</span>
             )}
             {(p.calBpm != null || p.calFirstBeat != null) && (
               <button
@@ -390,7 +371,7 @@ export function PlayerBar(p: Props) {
                 复位
               </button>
             )}
-            <span className="text-white/25">校准即时生效，边听边调</span>
+            <span className="text-white/25">每次点按打拍都会把当前位置设为首拍</span>
           </div>
         </div>
         )}
