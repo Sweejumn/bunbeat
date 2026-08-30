@@ -144,7 +144,9 @@ export function RecommendPanel({ recs, targetBpm, processing, onSelected, onPlay
                 <div className="w-10 text-center text-sm">
                   <TempoArrow originalBpm={r.song.original_bpm} targetBpm={targetBpm} />
                 </div>
-                <div className="w-12 text-right font-mono text-xs text-white/40">
+                <div
+                  className={`w-12 text-right font-mono text-xs ${bpmColor(r.song.original_bpm)}`}
+                >
                   {pctText(r.song.original_bpm)}
                 </div>
               </li>
