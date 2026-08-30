@@ -356,15 +356,8 @@ export function PlayerBar(p: Props) {
                   : '先点按打拍 8 下，计算出 BPM 后这里才能设置'
               }
             >
-              设置
+              设置{tapCount > 0 ? `（${tapCount}/8）` : ''}
             </button>
-            <span
-              className={`font-mono text-sm ${
-                tapCount > 0 ? 'text-accent' : 'text-white/30'
-              }`}
-            >
-              敲拍 {tapCount}/8
-            </span>
           </div>
 
           {/* row 3: first-beat tuning — switch controls whether taps set it */}
