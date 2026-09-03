@@ -265,7 +265,9 @@ class BpmAnalyzer {
       best /= 2.0;
       corrected = true;
     }
-    return (double.parse(best.toStringAsFixed(1)), corrected);
+    // 保留抛物线插值得到的真实精度（不再强制 1 位小数），
+    // 使两位小数显示有意义；仅去除浮点尾部噪声到 6 位。
+    return (double.parse(best.toStringAsFixed(6)), corrected);
   }
 
   static double _confidence(List<double> onset) {
