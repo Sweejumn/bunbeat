@@ -33,6 +33,7 @@ class _PlayerPageState extends State<PlayerPage> {
   late bool _tapSoundOn; // 缓存默认 false；持久化（对齐 Web runbpm.tapSound 默认关）
   // 打拍校准：每次点击记录墙钟时间与媒体位置；>=8 次后取中位间隔算 BPM。
   final List<double> _tapMediaSec = [];
+  int _lastTapAtMs = 0; // 上次打拍的墙钟毫秒，用于 >2s 间隔时重置本批（对齐 Web）
   final List<double> _tapMarks = []; // 最近 20 个打拍位置（媒体时间秒），供标尺 amber
   double? _tapBpm;
   bool _tapSetFirst = false; // 设首拍：每次打拍都用媒体位置对齐首拍
@@ -648,7 +649,7 @@ class _PlayerPageState extends State<PlayerPage> {
             ),
           ],
         ),
-        if (_tapBpm != null && _tapMediaSec.length >= 8)
+        if (_tapBpm != null)
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: Row(
@@ -692,7 +693,14 @@ class _PlayerPageState extends State<PlayerPage> {
     if (_tapSoundOn) {
       met.playTapClick();
     }
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
     final media = player.position.inMilliseconds / 1000.0;
+    // 对齐 Web 版 TapBpm：与上次打拍间隔 >2s 就另起一批，
+    // 避免跨暂停/停顿的旧间隔混入误判 BPM。
+    if (_lastTapAtMs != 0 && nowMs - _lastTapAtMs > 2000) {
+      _tapMediaSec.clear();
+    }
+    _lastTapAtMs = nowMs;
     _tapMediaSec.add(media);
     // 标尺上显示最近 20 个打拍标记（琥珀色）
     _tapMarks.add(media);
@@ -705,9 +713,8 @@ class _PlayerPageState extends State<PlayerPage> {
       met.reAnchor(player.position);
     }
     if (_tapMediaSec.length >= 8) {
-      // 对齐 Web 版 TapBpm：用播放媒体时间差（单调、不随系统调时回拨），
-      // 过滤过小（≤0.1s，双击/误触/seek 回退）间隔，取中位，
-      // 结果四舍五入为整数 BPM，杜绝负值/巨大等异常。
+      // 对齐 Web 版 TapBpm：取本批相邻媒体时间差、过滤 ≤0.1s（双击/误触/seek
+      // 回退）、取中位、四舍五入整数 BPM；算完重置本批，以便下一次连续 8 次重算。
       final intervals = <double>[];
       for (var i = 1; i < _tapMediaSec.length; i++) {
         final d = _tapMediaSec[i] - _tapMediaSec[i - 1];
@@ -718,6 +725,8 @@ class _PlayerPageState extends State<PlayerPage> {
         final median = intervals[intervals.length ~/ 2];
         _tapBpm = (60.0 / median).roundToDouble();
       }
+      _tapMediaSec.clear();
+      _lastTapAtMs = 0;
     }
     setState(() {});
   }
