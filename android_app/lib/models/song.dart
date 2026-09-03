@@ -8,9 +8,6 @@ enum BeatMode {
   /// 固定拍子：完全等距，默认推荐。
   grid,
 
-  /// 轻跟随：每拍可在等距点 ±5% 内贴向实际起音。
-  light,
-
   /// 跟随起音：±12% 内吸附打击点。
   snap,
 }
@@ -25,7 +22,6 @@ class BeatModeDef {
 
 const List<BeatModeDef> kBeatModes = [
   BeatModeDef(BeatMode.grid, '固定拍子', '完全等距 · 默认推荐'),
-  BeatModeDef(BeatMode.light, '轻跟随', '±5% 跟随起音'),
   BeatModeDef(BeatMode.snap, '跟随起音', '±12% 吸附打击点'),
 ];
 

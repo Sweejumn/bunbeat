@@ -108,29 +108,25 @@ void main() {
       expect(a.confidence, b.confidence);
     });
 
-    test('beatMaps 三个模式均生成且确定（grid/light/snap）', () {
+    test('beatMaps 模式均生成且确定（grid/snap）', () {
       const sr = 22050;
       final samples = makeClickTrack(140.0, sr, 10);
       final a = BpmAnalyzer.analyzePcm(samples, sampleRate: sr);
       final b = BpmAnalyzer.analyzePcm(samples, sampleRate: sr);
       expect(a.beatMaps, isNotNull);
-      expect(a.beatMaps!.keys.toSet(), containsAll(['grid', 'light', 'snap']));
+      expect(a.beatMaps!.keys.toSet(), containsAll(['grid', 'snap']));
       expect(a.beatMaps!['grid'], isNotEmpty);
       expect(a.beatMaps, b.beatMaps);
     });
 
-    test('light/snap 拍点在各自 ±5% / ±12% 周期内贴向 grid', () {
+    test('snap 拍点在各自 ±12% 周期内贴向 grid', () {
       const sr = 22050;
       final samples = makeClickTrack(140.0, sr, 10);
       final r = BpmAnalyzer.analyzePcm(samples, sampleRate: sr);
       final grid = r.beatMaps!['grid']!;
-      final light = r.beatMaps!['light']!;
       final snap = r.beatMaps!['snap']!;
       final period = 60.0 / r.bpm!;
-      final n = math.min(grid.length, light.length);
-      for (var i = 0; i < n; i++) {
-        expect((light[i] - grid[i]).abs(), lessThanOrEqualTo(0.05 * period + 1e-6));
-      }
+      final n = math.min(grid.length, snap.length);
       for (var i = 0; i < n; i++) {
         expect((snap[i] - grid[i]).abs(), lessThanOrEqualTo(0.12 * period + 1e-6));
       }
@@ -155,8 +151,7 @@ void main() {
       expect(grid, isNotEmpty);
       // 网格最后一个拍子应明显越过 60s 分析窗口（接近整首歌 90s）。
       expect(grid.last, greaterThan(60.0));
-      // light/snap 也继承了铺满的性质（在无起音的尾部回退到等距 grid）。
-      expect(r.beatMaps!['light']!.last, greaterThan(60.0));
+      // snap 也继承了铺满的性质（在无起音的尾部回退到等距 grid）。
       expect(r.beatMaps!['snap']!.last, greaterThan(60.0));
     });
   });

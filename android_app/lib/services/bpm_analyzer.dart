@@ -330,9 +330,8 @@ class BpmAnalyzer {
     return bestPhi;
   }
 
-  /// 生成三种节拍模式的时间轴（原始时间轴秒）：
+  /// 生成节拍模式的时间轴（原始时间轴秒）：
   ///   grid（固定拍子，完全等距，铺满整首歌）/
-  ///   light（轻跟随，每拍在等距点 ±5% 内贴向起音；超出分析窗口的部分回退等距）/
   ///   snap（跟随起音，±12% 内吸附打击点；超出窗口部分回退等距）。
   /// 键与 [BeatMode] 名称对应，保证始终含 grid。
   static Map<String, List<double>> _buildBeatMaps(
@@ -345,13 +344,11 @@ class BpmAnalyzer {
     final grid = _buildGrid(onset, bpm, total: total);
     if (grid.isEmpty) return <String, List<double>>{'grid': grid};
 
-    // 以 grid 为基础，向局部起音峰吸附（在原周期内，light/snap 不越界）；
+    // 以 grid 为基础，向局部起音峰吸附（在原周期内，snap 不越界）；
     // grid 已铺满整首歌，窗口外无起音峰时会自然回退到等距位置。
-    final light = _followOnsets(onset, grid, period, 0.05);
     final snap = _followOnsets(onset, grid, period, 0.12);
     return <String, List<double>>{
       'grid': grid,
-      'light': light,
       'snap': snap,
     };
   }

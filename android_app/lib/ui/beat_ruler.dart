@@ -12,10 +12,15 @@ class BeatRuler extends StatefulWidget {
   /// 返回当前播放位置（秒）；随时间推进，驱动标尺滚动。
   final double Function() getPositionSeconds;
 
+  /// 打拍校准标记（媒体时间秒，仅保留最近 20 个），用琥珀色显示在标尺上，
+  /// 对应 Web 版 PlayerBar 里 tapMarks 的最近 20 个标记。
+  final List<double> tapMarks;
+
   const BeatRuler({
     super.key,
     required this.beats,
     required this.getPositionSeconds,
+    this.tapMarks = const [],
   });
 
   @override
@@ -62,6 +67,21 @@ class _BeatRulerState extends State<BeatRuler>
                 top: 4,
                 bottom: 4,
                 child: Container(width: 2, color: Colors.greenAccent),
+              ));
+            }
+
+            // 打拍标记（琥珀色，只保留最近 20 个）——与绿线同一坐标系。
+            final taps = widget.tapMarks;
+            var tl = _lowerBound(taps, from);
+            for (var i = tl; i < taps.length; i++) {
+              final t = taps[i];
+              if (t > to) break;
+              final left = center + (t - now) * _px;
+              marks.add(Positioned(
+                left: left - 1.5,
+                top: 0,
+                bottom: 0,
+                child: Container(width: 3, color: Colors.amber),
               ));
             }
 

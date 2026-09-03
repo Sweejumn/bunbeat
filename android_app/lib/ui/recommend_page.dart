@@ -3,11 +3,11 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../models/modes.dart';
 import '../models/song.dart';
 import '../services/audio_player_service.dart';
 import '../services/library_service.dart';
 import '../services/queue_service.dart';
+import 'mode_picker.dart';
 import 'tempo_grade.dart';
 
 class RecommendPage extends StatefulWidget {
@@ -18,7 +18,6 @@ class RecommendPage extends StatefulWidget {
 }
 
 class _RecommendPageState extends State<RecommendPage> {
-  ModeId _mode = ModeId.run;
   final Set<String> _selected = {};
   double _lastAutoTarget = double.negativeInfinity;
 
@@ -70,53 +69,16 @@ class _RecommendPageState extends State<RecommendPage> {
       body: ListView(
         padding: EdgeInsets.fromLTRB(16, 16, 16, _selected.isEmpty ? 16 : 96),
         children: [
-          Text('选择运动模式', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: kModes.map((m) {
-              final selected = _mode == m.id;
-              return ChoiceChip(
-                avatar: Text(m.icon),
-                label: Text(
-                  '${m.label}\n${m.rangeLow}–${m.rangeHigh} BPM',
-                  textAlign: TextAlign.center,
-                ),
-                selected: selected,
-                onSelected: (_) {
-                  setState(() {
-                    _mode = m.id;
-                    lib.targetBpm = m.defaultBpm;
-                  });
-                },
-              );
-            }).toList(),
+          // 运动模式选择（与 Web 版 ModePicker 对齐：彩色滑块 + 快捷芯片 + 手动输入）。
+          ModePicker(
+            bpm: lib.targetBpm,
+            onChanged: (v) {
+              setState(() {
+                lib.targetBpm = v;
+              });
+            },
           ),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              const Text('目标 BPM'),
-              Expanded(
-                child: Slider(
-                  min: 60,
-                  max: 220,
-                  value: lib.targetBpm.clamp(60, 220).toDouble(),
-                  label: lib.targetBpm.round().toString(),
-                  onChanged: (v) => setState(() => lib.targetBpm = v),
-                ),
-              ),
-              SizedBox(
-                width: 56,
-                child: Text(
-                  '${lib.targetBpm.round()}',
-                  textAlign: TextAlign.end,
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
           Text('已识别 ${eligible} 首可用于变速的歌曲', style: Theme.of(context).textTheme.bodySmall),
           const SizedBox(height: 4),
           // 颜色/箭头图例（对齐 Web RecommendPanel）：差 <3% = · 3–5% ↑/↓ ·
