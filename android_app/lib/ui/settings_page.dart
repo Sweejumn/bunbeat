@@ -99,9 +99,9 @@ class SettingsPage extends StatelessWidget {
                 ListTile(
                   leading: const Icon(Icons.help_outline),
                   title: const Text('使用说明'),
-                  subtitle: const Text('选择节奏、推荐标记与变速播放说明'),
+                  subtitle: const Text('曲库/推荐/播放/设置说明，左右滑动切换查看'),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () => HelpDialog.show(context),
+                  onTap: () => HelpDialog.showAll(context),
                 ),
                 const Divider(height: 1),
                 ListTile(

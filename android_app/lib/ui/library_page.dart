@@ -8,6 +8,7 @@ import '../services/audio_reader.dart';
 import '../services/library_service.dart';
 import '../services/bpm_display_controller.dart';
 import 'archive_page.dart';
+import 'help_dialog.dart';
 import 'marquee_text.dart';
 import 'settings_page.dart';
 
@@ -150,6 +151,12 @@ class _LibraryPageState extends State<LibraryPage> {
       appBar: AppBar(
         title: const Text('Bunbeat · 曲库'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.help_outline),
+            tooltip: '使用说明',
+            onPressed: () =>
+                HelpDialog.show(context, section: HelpSection.library),
+          ),
           IconButton(
             icon: const Icon(Icons.inventory_2_outlined),
             tooltip: '归档',

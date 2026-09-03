@@ -13,6 +13,7 @@ import '../services/bpm_display_controller.dart';
 import '../services/metronome.dart';
 import '../services/queue_service.dart';
 import 'beat_ruler.dart';
+import 'help_dialog.dart';
 import 'settings_page.dart';
 
 /// 由一批打拍点计算 BPM。
@@ -315,6 +316,12 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       appBar: AppBar(
         title: const Text('播放'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.help_outline),
+            tooltip: '使用说明',
+            onPressed: () =>
+                HelpDialog.show(context, section: HelpSection.player),
+          ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
             tooltip: '设置',

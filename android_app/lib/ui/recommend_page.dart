@@ -39,7 +39,8 @@ class _RecommendPageState extends State<RecommendPage> {
           IconButton(
             icon: const Icon(Icons.help_outline),
             tooltip: '使用说明',
-            onPressed: () => HelpDialog.show(context),
+            onPressed: () =>
+                HelpDialog.show(context, section: HelpSection.recommend),
           ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
