@@ -7,6 +7,7 @@ import '../models/song.dart';
 import '../services/audio_reader.dart';
 import '../services/library_service.dart';
 import 'marquee_text.dart';
+import 'settings_page.dart';
 
 class LibraryPage extends StatelessWidget {
   const LibraryPage({super.key});
@@ -27,6 +28,14 @@ class LibraryPage extends StatelessWidget {
       appBar: AppBar(
         title: const Text('RUN BPM · 曲库'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: '设置',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SettingsPage()),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.folder_open),
             tooltip: '选择文件夹',

@@ -5,6 +5,7 @@ import 'services/audio_player_service.dart';
 import 'services/library_service.dart';
 import 'services/metronome.dart';
 import 'services/queue_service.dart';
+import 'services/theme_controller.dart';
 import 'ui/home_page.dart';
 
 void main() {
@@ -26,21 +27,32 @@ class _RunBpmAppState extends State<RunBpmApp> {
       providers: [
         ChangeNotifierProvider(create: (_) => LibraryService()),
         ChangeNotifierProvider(create: (_) => QueueService()),
+        ChangeNotifierProvider(create: (_) => ThemeController()),
         Provider(create: (_) => AudioPlayerService()),
         Provider(create: (_) => Metronome()),
       ],
-      child: MaterialApp(
-        title: 'RUN BPM',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: const Color(0xFF34D399),
-            brightness: Brightness.dark,
-          ),
-          useMaterial3: true,
-        ),
-        // 启动时恢复上次选择的文件夹：命中缓存即秒开，不重新解析。
-        home: _StartupGate(child: const HomePage()),
+      child: Consumer<ThemeController>(
+        builder: (context, themeCtrl, _) {
+          return MaterialApp(
+            title: 'RUN BPM',
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData(
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: themeCtrl.seed,
+              ),
+              useMaterial3: true,
+            ),
+            darkTheme: ThemeData(
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: themeCtrl.seed,
+                brightness: Brightness.dark,
+              ),
+              useMaterial3: true,
+            ),
+            themeMode: themeCtrl.mode,
+            home: _StartupGate(child: const HomePage()),
+          );
+        },
       ),
     );
   }
@@ -66,6 +78,7 @@ class _StartupGateState extends State<_StartupGate> {
       // 等首帧画完再恢复，避免启动时白屏等待即时的缓存扫描。
       WidgetsBinding.instance.addPostFrameCallback((_) {
         context.read<LibraryService>().restoreLastFolder();
+        context.read<ThemeController>().load();
       });
     }
   }

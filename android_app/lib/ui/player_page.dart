@@ -12,6 +12,7 @@ import '../services/library_service.dart';
 import '../services/metronome.dart';
 import '../services/queue_service.dart';
 import 'beat_ruler.dart';
+import 'settings_page.dart';
 
 class PlayerPage extends StatefulWidget {
   const PlayerPage({super.key});
@@ -238,7 +239,19 @@ class _PlayerPageState extends State<PlayerPage> {
     final beatList = _currentBeatList(song, current.targetBpm);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('播放')),
+      appBar: AppBar(
+        title: const Text('播放'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: '设置',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SettingsPage()),
+            ),
+          ),
+        ],
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: SingleChildScrollView(

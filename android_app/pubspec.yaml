@@ -35,6 +35,9 @@ dependencies:
   # NCM（网易云加密格式）解析：AES-128-ECB 解密 key/元数据段
   pointycastle: ^3.9.1
 
+  # 关于页展示真实版本号
+  package_info_plus: ^8.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
