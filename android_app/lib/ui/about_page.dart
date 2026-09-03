@@ -50,7 +50,7 @@ class _AboutPageState extends State<AboutPage> {
                       size: 52, color: Colors.white),
                 ),
                 const SizedBox(height: 12),
-                Text('RUN BPM',
+                Text('Bunbeat',
                     style: theme.textTheme.headlineSmall
                         ?.copyWith(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 4),
@@ -71,7 +71,7 @@ class _AboutPageState extends State<AboutPage> {
                   Text('简介', style: theme.textTheme.titleSmall),
                   const SizedBox(height: 8),
                   Text(
-                    'RUN BPM 是一款跑步音乐播放器：选择本地文件夹直接读取音乐，自动识别 BPM，'
+                    'Bunbeat 是一款跑步音乐播放器：选择本地文件夹直接读取音乐，自动识别 BPM，'
                     '按你选的节奏变速（保持音高）连续播放，并配合节拍器帮你踩点跑。'
                     '完全离线运行，音乐文件不离开你的设备。',
                     style: theme.textTheme.bodyMedium,

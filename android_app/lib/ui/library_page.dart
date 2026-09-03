@@ -36,7 +36,7 @@ class _LibraryPageState extends State<LibraryPage> {
     final lib = context.watch<LibraryService>();
     return Scaffold(
       appBar: AppBar(
-        title: const Text('RUN BPM · 曲库'),
+        title: const Text('Bunbeat · 曲库'),
         actions: [
           IconButton(
             icon: const Icon(Icons.settings_outlined),

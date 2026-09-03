@@ -37,7 +37,7 @@ class _RunBpmAppState extends State<RunBpmApp> {
       child: Consumer<ThemeController>(
         builder: (context, themeCtrl, _) {
           return MaterialApp(
-            title: 'RUN BPM',
+            title: 'Bunbeat',
             debugShowCheckedModeBanner: false,
             theme: ThemeData(
               colorScheme: ColorScheme.fromSeed(
