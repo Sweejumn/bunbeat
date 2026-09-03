@@ -75,47 +75,55 @@ class UpdateFlow {
   ) async {
     // 同步锁：同一时间只有一个下载对话框。
     final navigator = Navigator.of(context, rootNavigator: true);
-    var received = 0;
-    var total = 0;
-    var failed = false;
+    // 用单个 ValueNotifier 承载下载状态，进度回调里更新它会触发对话框重建，
+    // 从而实时刷新进度条与 MB 数（此前只改了局部变量，UI 不重建导致一直显示"准备下载"）。
+    final state = ValueNotifier<_DownloadState>(const _DownloadState(
+      received: 0,
+      total: 0,
+      cancelled: false,
+      failed: false,
+    ));
 
-    final cancel = ValueNotifier<bool>(false);
     showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => ValueListenableBuilder<bool>(
-        valueListenable: cancel,
-        builder: (ctx, cancelled, _) => AlertDialog(
-          title: const Text('正在下载更新'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              LinearProgressIndicator(
-                value: failed
-                    ? null
-                    : total > 0
-                        ? received / total
-                        : null,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                failed
-                    ? '下载失败，请稍后再试'
-                    : total > 0
-                        ? '${(received / 1024 / 1024).toStringAsFixed(1)} MB / '
-                            '${(total / 1024 / 1024).toStringAsFixed(1)} MB'
-                        : '准备下载…',
-                style: Theme.of(ctx).textTheme.bodySmall,
+      builder: (ctx) => ValueListenableBuilder<_DownloadState>(
+        valueListenable: state,
+        builder: (ctx, s, _) {
+          final progress = s.total > 0 ? s.received / s.total : null;
+          return AlertDialog(
+            title: const Text('正在下载更新'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                LinearProgressIndicator(
+                  value: s.failed || progress == null ? null : progress,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  s.failed
+                      ? '下载失败，请稍后再试'
+                      : progress != null
+                          ? '${(s.received / 1024 / 1024).toStringAsFixed(1)} MB / '
+                              '${(s.total / 1024 / 1024).toStringAsFixed(1)} MB'
+                          : '准备下载…',
+                  style: Theme.of(ctx).textTheme.bodySmall,
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => state.value = _DownloadState(
+                  received: s.received,
+                  total: s.total,
+                  cancelled: true,
+                  failed: s.failed,
+                ),
+                child: const Text('取消'),
               ),
             ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => cancel.value = true,
-              child: const Text('取消'),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
 
@@ -123,11 +131,15 @@ class UpdateFlow {
       final path = await svc.downloadApk(
         info,
         (r, t) {
-          received = r;
-          total = t;
+          state.value = _DownloadState(
+            received: r,
+            total: t == 0 ? r : t,
+            cancelled: state.value.cancelled,
+            failed: state.value.failed,
+          );
         },
       );
-      if (cancel.value) return;
+      if (state.value.cancelled) return;
       if (navigator.mounted) navigator.pop(); // 关闭下载对话框
       if (!context.mounted) return;
       final ok = await svc.installApk(path);
@@ -140,7 +152,12 @@ class UpdateFlow {
         ),
       );
     } catch (_) {
-      failed = true;
+      state.value = _DownloadState(
+        received: state.value.received,
+        total: state.value.total,
+        cancelled: state.value.cancelled,
+        failed: true,
+      );
       // 让下载对话框显示失败态；2 秒后自动关闭。
       await Future<void>.delayed(const Duration(seconds: 2));
       if (navigator.mounted) navigator.pop();
@@ -150,4 +167,18 @@ class UpdateFlow {
       );
     }
   }
+}
+
+/// 下载对话框的瞬时状态，驱动 UI 重建以实时显示进度。
+class _DownloadState {
+  final int received;
+  final int total;
+  final bool cancelled;
+  final bool failed;
+  const _DownloadState({
+    required this.received,
+    required this.total,
+    required this.cancelled,
+    required this.failed,
+  });
 }
