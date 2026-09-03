@@ -353,25 +353,43 @@ class _PlayerPageState extends State<PlayerPage> {
                 children: [
                   Text(_fmt(position),
                       style: const TextStyle(
-                          fontSize: 12, fontFeatures: [FontFeature.tabularFigures()])),
+                          fontSize: 10,
+                          fontFeatures: [FontFeature.tabularFigures()])),
                   Expanded(
-                    child: Slider(
-                      value: duration.inMilliseconds > 0
-                          ? (position.inMilliseconds / duration.inMilliseconds)
-                              .clamp(0.0, 1.0)
-                          : 0.0,
-                      onChanged: (v) {
-                        if (duration.inMilliseconds > 0) {
-                          player.seek(Duration(
-                              milliseconds:
-                                  (v * duration.inMilliseconds).round()));
-                        }
-                      },
+                    child: SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        // 让已播放部分用主题主色清晰显示（默认 M3 在此背景上几乎不可见）
+                        activeTrackColor: colorScheme.primary,
+                        inactiveTrackColor: colorScheme.outlineVariant,
+                        thumbColor: colorScheme.primary,
+                        activeTickMarkColor: colorScheme.primary,
+                        inactiveTickMarkColor: colorScheme.outlineVariant,
+                      ),
+                      child: Slider(
+                        value: duration.inMilliseconds > 0
+                            ? (position.inMilliseconds / duration.inMilliseconds)
+                                .clamp(0.0, 1.0)
+                            : 0.0,
+                        onChanged: (v) {
+                          if (duration.inMilliseconds > 0) {
+                            player.seek(Duration(
+                                milliseconds:
+                                    (v * duration.inMilliseconds).round()));
+                          }
+                        },
+                      ),
                     ),
                   ),
-                  Text(_fmt(duration),
-                      style: const TextStyle(
-                          fontSize: 12, fontFeatures: [FontFeature.tabularFigures()])),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 2),
+                    child: Text(_fmt(duration),
+                        style: TextStyle(
+                            fontSize: 10,
+                            color: colorScheme.onSurfaceVariant,
+                            fontFeatures: const [
+                              FontFeature.tabularFigures()
+                            ])),
+                  ),
                 ],
               ),
               // 播放控制一行：随机 / 上一首 / 播放暂停 / 下一首 / 单曲循环
