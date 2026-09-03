@@ -969,11 +969,7 @@ class _PlaylistSheetState extends State<_PlaylistSheet> {
                   TextButton.icon(
                     onPressed: items.isEmpty
                         ? null
-                        : () {
-                            q.clear();
-                            // 清空后没有可播放内容，关闭弹层。
-                            Navigator.of(context).pop();
-                          },
+                        : () => _confirmClear(),
                     icon: const Icon(Icons.delete_sweep, size: 18),
                     label: const Text('清空'),
                   ),
@@ -1028,6 +1024,34 @@ class _PlaylistSheetState extends State<_PlaylistSheet> {
       if (s.filePath == filePath) return s.artworkPath;
     }
     return null;
+  }
+
+  /// 清空播放列表：先二次确认，确认后清空队列 + 立刻停止当前播放并关闭弹层。
+  Future<void> _confirmClear() async {
+    final q = context.read<QueueService>();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('清空播放列表？'),
+        content: const Text('将移除队列中所有歌曲并停止当前播放。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('清空'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    q.clear();
+    // 立刻停止播放：ExoPlayer 停止 → 状态变非播放 → 节拍器自动关闭。
+    context.read<AudioPlayerService>().stop();
+    // 清空后没有可播放内容，关闭弹层。
+    Navigator.of(context).pop();
   }
 }
 
