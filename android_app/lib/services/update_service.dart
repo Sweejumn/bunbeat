@@ -41,6 +41,12 @@ class UpdateService {
   Future<UpdateCheck> checkForUpdate() async {
     try {
       final current = await PackageInfo.fromPlatform();
+      // PackageInfo.version 是 versionName（如 0.1.0），不带 build 号；
+      // build 号在 versionCode（buildNumber）里。这里拼成 0.1.0+32，
+      // 否则 _isNewer 因 current 无 build 号会回退到 semver 相等而漏判更新。
+      final currentFull = current.buildNumber.isNotEmpty
+          ? '${current.version}+${current.buildNumber}'
+          : current.version;
       final dio = Dio();
       final resp = await dio.get<Map<String, dynamic>>(
         _api,
@@ -71,7 +77,7 @@ class UpdateService {
       }
       if (apkUrl == null) return const UpdateCheck(status: UpdateStatus.failed);
 
-      if (!_isNewer(latest, current.version)) {
+      if (!_isNewer(latest, currentFull)) {
         return const UpdateCheck(status: UpdateStatus.upToDate);
       }
 
