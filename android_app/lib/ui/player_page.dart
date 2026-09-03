@@ -609,12 +609,17 @@ class _PlayerPageState extends State<PlayerPage> {
                 const Text('节拍器'),
                 Switch(
                   value: met.isEnabled,
-                  onChanged: (v) {
+                  onChanged: (v) async {
                     if (v) {
-                      met.ensureInitialized();
+                      // 先确保节拍器声音池就绪（写 WAV + 预建播放器池），
+                      // 再启用定时器，最后才锚定拍点/相位 ——
+                      // 顺序很关键：若在 setEnabled 前 _reAnchor，
+                      // 因 isEnabled 仍为 false 会直接 return，
+                      // 导致节拍器被启用却没有拍点，彻底无声。
+                      await met.ensureInitialized();
                       met.setBpm(targetBpm);
-                      _reAnchor(player);
                       met.setEnabled(true);
+                      _reAnchor(player);
                     } else {
                       met.setEnabled(false);
                     }

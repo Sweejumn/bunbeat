@@ -47,11 +47,14 @@ class Metronome {
   void Function(double mediaSeconds)? onClick;
 
   Future<void> ensureInitialized() async {
-    if (_clickPath != null) return;
-    final dir = await getTemporaryDirectory();
-    _clickPath = p.join(dir.path, 'runbpm_tick.wav');
-    if (!await File(_clickPath!).exists()) {
-      await _writeClickWav(_clickPath!);
+    // 每次都确保声音池已建好：即使第一次建池中途失败/中断，
+    // 只要 _pool 还空着，再次调用就会重试 _initPool()（内部有防重复守卫）。
+    if (_clickPath == null) {
+      final dir = await getTemporaryDirectory();
+      _clickPath = p.join(dir.path, 'runbpm_tick.wav');
+      if (!await File(_clickPath!).exists()) {
+        await _writeClickWav(_clickPath!);
+      }
     }
     await _initPool();
   }
@@ -202,8 +205,9 @@ class Metronome {
     final pl = _pool[best];
     _poolLastUsedMs[best] = now;
     try {
-      pl.seek(Duration.zero);
-      pl.play();
+      // 必须先完成 seek(0) 再 play：播放器在 LoopMode.off 播完 60ms 嗒声后
+      // 会停在文件末尾，若 play 抢在 seek 生效前执行就会从结尾“空播”。
+      unawaited(pl.seek(Duration.zero).then((_) => pl.play()));
     } catch (_) {}
   }
 
