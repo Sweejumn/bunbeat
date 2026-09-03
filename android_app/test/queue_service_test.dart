@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:run_bpm_android/services/audio_player_service.dart';
 import 'package:run_bpm_android/services/queue_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// 构造 [n] 个测试歌曲，原始 BPM 各不相同以便区分。
 List<PlaylistItem> songs(int n) {
@@ -15,6 +16,8 @@ List<PlaylistItem> songs(int n) {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  SharedPreferences.setMockInitialValues({});
   group('start / 基本状态', () {
     test('start 后 index=0 且 playing', () {
       final q = QueueService();
@@ -261,6 +264,68 @@ void main() {
     test('originalBpm<=0 回退 1.0', () {
       final it = PlaylistItem(filePath: 'a', originalBpm: 0, targetBpm: 150);
       expect(it.speed, 1.0);
+    });
+  });
+
+  group('持久化（退出保留）', () {
+    test('保存队列/索引/模式，加载后恢复且不自动播放', () async {
+      SharedPreferences.setMockInitialValues({});
+      final q = QueueService();
+      q.start(songs(3));
+      q.setLoopMode(LoopMode.one);
+      // 非随机下 next 一次，确定性推进到索引 1。
+      q.next();
+      q.setShuffle(true);
+      expect(q.index, 1);
+      // 让异步写盘（_persist 为 fire-and-forget）有机会落盘。
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      final q2 = QueueService();
+      await q2.loadFromPrefs();
+      expect(q2.items.length, 3);
+      expect(q2.index, 1);
+      expect(q2.shuffle, isTrue);
+      expect(q2.repeatingOne, isTrue);
+      // 不自动播放：无论恢复前是否播放过，加载后都应停住等用户点播放。
+      expect(q2.playing, isFalse);
+      expect(q2.current?.filePath, '/music/song_1.mp3');
+    });
+
+    test('removeAt 后持久化，再加载队列已更新', () async {
+      SharedPreferences.setMockInitialValues({});
+      final q = QueueService();
+      q.start(songs(4));
+      q.removeAt(1);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      final q2 = QueueService();
+      await q2.loadFromPrefs();
+      expect(q2.items.length, 3);
+      expect(q2.items[1].filePath, '/music/song_2.mp3');
+    });
+
+    test('moveItem 后持久化，再加载顺序已更新', () async {
+      SharedPreferences.setMockInitialValues({});
+      final q = QueueService();
+      q.start(songs(3));
+      // 把第 2 首移到最前：[song1, song0, song2]
+      q.moveItem(1, 0);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      final q2 = QueueService();
+      await q2.loadFromPrefs();
+      expect(q2.items[0].filePath, '/music/song_1.mp3');
+      expect(q2.items[1].filePath, '/music/song_0.mp3');
+      expect(q2.items[2].filePath, '/music/song_2.mp3');
+    });
+
+    test('无持久化数据时加载为空队列', () async {
+      SharedPreferences.setMockInitialValues({});
+      final q = QueueService();
+      await q.loadFromPrefs();
+      expect(q.items, isEmpty);
+      expect(q.index, -1);
+      expect(q.playing, isFalse);
     });
   });
 }

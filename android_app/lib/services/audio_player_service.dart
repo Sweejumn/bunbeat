@@ -45,6 +45,20 @@ class AudioPlayerService {
     return true;
   }
 
+  /// 只装载当前曲（设源 + 变速），但不自动播放。
+  /// 用于退出后恢复队列时把歌曲「准备好」，等用户点播放键再出声。
+  Future<bool> loadPaused(PlaylistItem item) async {
+    try {
+      await _player.setUrl(item.filePath);
+      await _player.setSpeed(item.speed);
+      await _player.pause();
+      return true;
+    } catch (e) {
+      debugPrint('loadPaused failed: $e');
+      return false;
+    }
+  }
+
   Future<void> setSpeed(double speed) => _player.setSpeed(speed);
 
   Future<void> toggle() {

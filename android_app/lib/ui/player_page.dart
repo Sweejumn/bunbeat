@@ -63,6 +63,8 @@ class _PlayerPageState extends State<PlayerPage> {
   static const String _prefPhaseNudge = 'runbpm.phaseNudge';
   static const String _prefBeatMode = 'runbpm.beatMode';
   static const String _prefTapSound = 'runbpm.tapSound';
+  static const String _prefMusicVolume = 'runbpm.musicVolume';
+  static const String _prefMetVolume = 'runbpm.metVolume';
 
   @override
   void initState() {
@@ -120,7 +122,13 @@ class _PlayerPageState extends State<PlayerPage> {
       if (mode != null) _activeBeatMode = mode;
       _metEnabled = prefs.getBool(_prefMetOn) ?? true;
       _tapSoundOn = prefs.getBool(_prefTapSound) ?? false;
+      _musicVolume = (prefs.getDouble(_prefMusicVolume) ?? 1.0).clamp(0.0, 1.0);
+      _metVolume = (prefs.getDouble(_prefMetVolume) ?? 0.5).clamp(0.0, 1.0);
     });
+    // 把恢复的音量应用到播放器/节拍器。
+    final player = context.read<AudioPlayerService>().player;
+    player.setVolume(_musicVolume);
+    context.read<Metronome>().setVolume(_metVolume);
   }
 
   Future<void> _savePref(String key, Object value) async {
@@ -408,46 +416,42 @@ class _PlayerPageState extends State<PlayerPage> {
                   ),
                 ],
               ),
-              // 播放控制一行：随机 / 上一首 / 播放暂停 / 下一首 / 单曲循环
+              // 播放控制一行：左下=播放模式（点按循环切换），中间=传输控制，右下=播放列表。
               Row(
-                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  IconButton(
-                    tooltip: queue.shuffle ? '随机播放：开' : '随机播放：关',
-                    icon: Icon(
-                      Icons.shuffle,
-                      color: queue.shuffle ? colorScheme.primary : null,
+                  // 左下：播放模式按钮（点一下循环：列表循环→单曲循环→随机→列表循环…）。
+                  _buildModeButton(queue),
+                  // 中间：上一首 / 播放暂停 / 下一首。
+                  Expanded(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        IconButton(
+                          iconSize: 36,
+                          icon: const Icon(Icons.skip_previous),
+                          onPressed: () => _prev(context),
+                        ),
+                        IconButton(
+                          iconSize: 56,
+                          icon: Icon(queue.playing
+                              ? Icons.pause_circle
+                              : Icons.play_circle),
+                          onPressed: () => _toggle(context),
+                        ),
+                        IconButton(
+                          iconSize: 36,
+                          icon: const Icon(Icons.skip_next),
+                          onPressed: () => _next(context),
+                        ),
+                      ],
                     ),
-                    onPressed: () =>
-                        context.read<QueueService>().setShuffle(!queue.shuffle),
                   ),
+                  // 右下：播放列表入口。
                   IconButton(
-                    iconSize: 36,
-                    icon: const Icon(Icons.skip_previous),
-                    onPressed: () => _prev(context),
-                  ),
-                  IconButton(
-                    iconSize: 56,
-                    icon: Icon(
-                        queue.playing ? Icons.pause_circle : Icons.play_circle),
-                    onPressed: () => _toggle(context),
-                  ),
-                  IconButton(
-                    iconSize: 36,
-                    icon: const Icon(Icons.skip_next),
-                    onPressed: () => _next(context),
-                  ),
-                  IconButton(
-                    tooltip: _loopLabel(queue.loopMode),
-                    icon: Icon(
-                      queue.repeatingOne ? Icons.repeat_one : Icons.repeat,
-                      color: queue.repeatingOne ? colorScheme.primary : null,
-                    ),
-                    // 单曲循环：点一下切换开启/关闭（不做 off/all/one 循环）。
-                    onPressed: () {
-                      final q = context.read<QueueService>();
-                      q.setLoopMode(q.repeatingOne ? LoopMode.all : LoopMode.one);
-                    },
+                    tooltip: '播放列表',
+                    iconSize: 28,
+                    icon: const Icon(Icons.queue_music),
+                    onPressed: () => _openPlaylist(context),
                   ),
                 ],
               ),
@@ -458,12 +462,74 @@ class _PlayerPageState extends State<PlayerPage> {
     );
   }
 
-  String _loopLabel(LoopMode m) {
-    return switch (m) {
-      LoopMode.off => '列表循环：关闭（播完即停）',
-      LoopMode.all => '列表循环：开启',
-      LoopMode.one => '单曲循环：开启',
-    };
+  /// 当前播放模式的图标与简短文字（左下角显示）。
+  (IconData, String) _playModeInfo(QueueService q) {
+    if (q.shuffle) return (Icons.shuffle, '随机');
+    if (q.repeatingOne) return (Icons.repeat_one, '单曲循环');
+    return (Icons.repeat, '列表循环');
+  }
+
+  /// 点一下循环切换播放模式：列表循环 → 单曲循环 → 随机 → 列表循环…
+  void _cyclePlayMode(QueueService q) {
+    if (q.shuffle) {
+      q.setShuffle(false);
+      q.setLoopMode(LoopMode.all);
+    } else if (q.repeatingOne) {
+      q.setShuffle(true);
+    } else {
+      q.setLoopMode(LoopMode.one);
+    }
+  }
+
+  /// 左下角「播放模式」按钮：图标 + 文字，点按循环切换，方便直接看到当前模式。
+  Widget _buildModeButton(QueueService q) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final (icon, label) = _playModeInfo(q);
+    final active = q.shuffle || q.repeatingOne;
+    return Tooltip(
+      message: '播放模式（点按切换）：$label',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => _cyclePlayMode(q),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon,
+                  size: 22, color: active ? colorScheme.primary : null),
+              Text(label,
+                  style: TextStyle(
+                      fontSize: 9,
+                      color: active ? colorScheme.primary : null)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 打开右下角「播放列表」底部弹层：封面/标题/BPM、当前高亮、点击跳歌、
+  /// 删除、长按拖动排序、清空。
+  void _openPlaylist(BuildContext context) {
+    final q = context.read<QueueService>();
+    if (q.items.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('播放列表为空')),
+      );
+      return;
+    }
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => _PlaylistSheet(
+        onPlayIndex: (index) {
+          q.jumpTo(index);
+          _loadCurrent(context, q);
+        },
+      ),
+    );
   }
 
   String _fmt(Duration d) {
@@ -814,6 +880,7 @@ class _PlayerPageState extends State<PlayerPage> {
                         onChanged: (v) {
                           setState(() => _musicVolume = v);
                           player.setVolume(v);
+                          _savePref(_prefMusicVolume, v);
                         },
                       ),
                     ],
@@ -831,6 +898,7 @@ class _PlayerPageState extends State<PlayerPage> {
                         onChanged: (v) {
                           setState(() => _metVolume = v);
                           met.setVolume(v);
+                          _savePref(_prefMetVolume, v);
                         },
                       ),
                     ],
@@ -856,6 +924,191 @@ class _ArtworkPlaceholder extends StatelessWidget {
       child: const Center(
         child: Icon(Icons.music_note, size: 40, color: Colors.grey),
       ),
+    );
+  }
+}
+
+/// 播放列表底部弹层：显示当前队列，支持点击跳歌、长按拖动排序、删除单首、清空。
+class _PlaylistSheet extends StatefulWidget {
+  final void Function(int index) onPlayIndex;
+  const _PlaylistSheet({required this.onPlayIndex});
+
+  @override
+  State<_PlaylistSheet> createState() => _PlaylistSheetState();
+}
+
+class _PlaylistSheetState extends State<_PlaylistSheet> {
+  @override
+  Widget build(BuildContext context) {
+    final q = context.watch<QueueService>();
+    final lib = context.watch<LibraryService>();
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final items = q.items;
+
+    // 头部：标题 + 当前模式 + 清空按钮。
+    String modeLabel;
+    IconData modeIcon;
+    if (q.shuffle) {
+      modeLabel = '随机';
+      modeIcon = Icons.shuffle;
+    } else if (q.repeatingOne) {
+      modeLabel = '单曲循环';
+      modeIcon = Icons.repeat_one;
+    } else {
+      modeLabel = '列表循环';
+      modeIcon = Icons.repeat;
+    }
+
+    return SafeArea(
+      child: SizedBox(
+        height: MediaQuery.of(context).size.height * 0.7,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 8, 4),
+              child: Row(
+                children: [
+                  Text('播放列表（${items.length}）',
+                      style: theme.textTheme.titleMedium),
+                  const SizedBox(width: 8),
+                  Icon(modeIcon, size: 18, color: colorScheme.primary),
+                  const SizedBox(width: 4),
+                  Text(modeLabel,
+                      style: TextStyle(
+                          fontSize: 12, color: colorScheme.onSurfaceVariant)),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: items.isEmpty
+                        ? null
+                        : () {
+                            q.clear();
+                            // 清空后没有可播放内容，关闭弹层。
+                            Navigator.of(context).pop();
+                          },
+                    icon: const Icon(Icons.delete_sweep, size: 18),
+                    label: const Text('清空'),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: items.isEmpty
+                  ? const Center(child: Text('播放列表为空'))
+                  : ReorderableListView.builder(
+                      buildDefaultDragHandles: false,
+                      itemCount: items.length,
+                      // 长按手柄即可拖动排序。
+                      onReorder: (oldIndex, newIndex) {
+                        setState(() {
+                          if (newIndex > oldIndex) newIndex--;
+                          q.moveItem(oldIndex, newIndex);
+                        });
+                      },
+                      itemBuilder: (context, index) {
+                        final item = items[index];
+                        final isCurrent = index == q.index;
+                        return ReorderableDragStartListener(
+                          key: ValueKey('item-$index'),
+                          index: index,
+                          child: _PlaylistTile(
+                            item: item,
+                            isCurrent: isCurrent,
+                            artworkPath: _artworkFor(lib, item.filePath),
+                            onTap: isCurrent
+                                ? null
+                                : () {
+                                    widget.onPlayIndex(index);
+                                    Navigator.of(context).pop();
+                                  },
+                            onDelete: () => q.removeAt(index),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 从曲库按文件路径匹配封面（队列可能来自持久化，曲库未就绪时返回 null）。
+  String? _artworkFor(LibraryService lib, String filePath) {
+    for (final s in lib.songs) {
+      if (s.filePath == filePath) return s.artworkPath;
+    }
+    return null;
+  }
+}
+
+/// 播放列表单行：封面 + 标题 + 原/目标 BPM，当前播放高亮。
+class _PlaylistTile extends StatelessWidget {
+  final PlaylistItem item;
+  final bool isCurrent;
+  final String? artworkPath;
+  final VoidCallback? onTap;
+  final VoidCallback onDelete;
+  const _PlaylistTile({
+    required this.item,
+    required this.isCurrent,
+    required this.artworkPath,
+    required this.onTap,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    return ListTile(
+      onTap: onTap,
+      selected: isCurrent,
+      selectedTileColor: colorScheme.primary.withValues(alpha: 0.12),
+      leading: ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        child: SizedBox(
+          width: 42,
+          height: 42,
+          child: artworkPath != null
+              ? Image.file(
+                  File(artworkPath!),
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) =>
+                      const Icon(Icons.music_note, color: Colors.grey),
+                )
+              : const Icon(Icons.music_note, color: Colors.grey),
+        ),
+      ),
+      title: Text(
+        item.filePath.split('/').last,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: Text(
+        '${context.read<BpmDisplayController>().format(item.originalBpm)}→'
+        '${context.read<BpmDisplayController>().format(item.targetBpm)} BPM',
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (isCurrent)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Icon(Icons.graphic_eq,
+                  size: 20, color: colorScheme.primary),
+            ),
+          // 拖动排序手柄（长按整行或此图标即可拖动）。
+          Icon(Icons.drag_handle, color: colorScheme.onSurfaceVariant),
+          IconButton(
+            tooltip: '从播放列表移除',
+            icon: const Icon(Icons.close, size: 20),
+            onPressed: onDelete,
+          ),
+        ],
+      ),
+      dense: true,
     );
   }
 }

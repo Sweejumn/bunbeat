@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'audio_player_service.dart';
 
@@ -25,6 +27,62 @@ class QueueService extends ChangeNotifier {
   LoopMode _loopMode = LoopMode.all;
   bool _shuffle = false;
 
+  // ---------- 持久化（退出后恢复上次播放内容/模式） ----------
+  static const String _prefQueue = 'runbpm.queue';
+  static const String _prefQueueIndex = 'runbpm.queueIndex';
+  static const String _prefLoopMode = 'runbpm.loopMode';
+  static const String _prefShuffle = 'runbpm.shuffle';
+
+  /// 启动时从持久化恢复上次的播放队列 + 当前曲 + 循环/随机模式。
+  /// 只恢复到「已就绪不自动播放」状态：不触发播放，需用户点击播放键。
+  Future<void> loadFromPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_prefQueue);
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return;
+      final items = <PlaylistItem>[];
+      for (final e in decoded) {
+        if (e is! Map) continue;
+        final fp = e['f'];
+        if (fp is! String || fp.isEmpty) continue;
+        final t = (e['t'] as num?)?.toDouble() ?? 120.0;
+        final o = (e['o'] as num?)?.toDouble() ?? t;
+        items.add(PlaylistItem(filePath: fp, originalBpm: o, targetBpm: t));
+      }
+      if (items.isEmpty) return;
+      _items = items;
+      _index = (prefs.getInt(_prefQueueIndex) ?? 0).clamp(0, _items.length - 1);
+      final lm = prefs.getString(_prefLoopMode);
+      for (final m in LoopMode.values) {
+        if (m.name == lm) {
+          _loopMode = m;
+          break;
+        }
+      }
+      _shuffle = prefs.getBool(_prefShuffle) ?? false;
+      _playing = false; // 恢复后不自动播放
+      _shuffleHistory.clear();
+      notifyListeners();
+    } catch (_) {
+      // 反序列化失败则忽略，保持空队列。
+    }
+  }
+
+  /// 把当前队列/当前曲/循环/随机模式写盘（退出后可恢复）。
+  Future<void> _persist() async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = [
+      for (final it in _items)
+        {'f': it.filePath, 't': it.targetBpm, 'o': it.originalBpm},
+    ];
+    await prefs.setString(_prefQueue, jsonEncode(list));
+    await prefs.setInt(_prefQueueIndex, _index);
+    await prefs.setString(_prefLoopMode, _loopMode.name);
+    await prefs.setBool(_prefShuffle, _shuffle);
+  }
+
   /// 随机播放时记住上一首，避免立刻重复；仅队列内随机。
   final List<int> _shuffleHistory = [];
 
@@ -43,6 +101,7 @@ class QueueService extends ChangeNotifier {
     if (_loopMode == mode) return;
     _loopMode = mode;
     notifyListeners();
+    _persist();
   }
 
   void setShuffle(bool on) {
@@ -50,6 +109,7 @@ class QueueService extends ChangeNotifier {
     _shuffle = on;
     _shuffleHistory.clear();
     notifyListeners();
+    _persist();
   }
 
   /// 用选定歌曲建立播放列表并从第一首开始。
@@ -59,6 +119,7 @@ class QueueService extends ChangeNotifier {
     _playing = true;
     _shuffleHistory.clear();
     notifyListeners();
+    _persist();
   }
 
   void setPlaying(bool p) {
@@ -75,6 +136,7 @@ class QueueService extends ChangeNotifier {
       _index = 0;
       _playing = true;
       notifyListeners();
+      _persist();
       return;
     }
     if (_shuffle) {
@@ -84,6 +146,7 @@ class QueueService extends ChangeNotifier {
     }
     _playing = true;
     notifyListeners();
+    _persist();
   }
 
   void prev() {
@@ -92,6 +155,7 @@ class QueueService extends ChangeNotifier {
       _index = 0;
       _playing = true;
       notifyListeners();
+      _persist();
       return;
     }
     if (_shuffle) {
@@ -101,6 +165,7 @@ class QueueService extends ChangeNotifier {
     }
     _playing = true;
     notifyListeners();
+    _persist();
   }
 
   /// 一首自然播放结束后的行为（由播放器 ended 事件调用）。
@@ -117,6 +182,7 @@ class QueueService extends ChangeNotifier {
       if (_loopMode == LoopMode.off) {
         _playing = false;
         notifyListeners();
+        _persist();
       } else {
         _playing = true;
         notifyListeners();
@@ -132,11 +198,60 @@ class QueueService extends ChangeNotifier {
         _index = _items.length - 1;
         _playing = false;
         notifyListeners();
+        _persist();
         return;
       }
     }
     _playing = true;
     notifyListeners();
+    _persist();
+  }
+
+  /// 跳转到队列中指定索引的歌曲（由播放列表点击触发）。
+  void jumpTo(int index) {
+    if (index < 0 || index >= _items.length) return;
+    _index = index;
+    _playing = true;
+    _shuffleHistory.clear();
+    notifyListeners();
+    _persist();
+  }
+
+  /// 从队列移除指定索引；若移除的是当前曲，则自动落到下一首（或越界时回退）。
+  void removeAt(int index) {
+    if (index < 0 || index >= _items.length) return;
+    _items.removeAt(index);
+    if (_items.isEmpty) {
+      _index = -1;
+      _playing = false;
+    } else if (index < _index) {
+      _index = _index - 1; // 删的是当前曲之前
+    } else if (index == _index) {
+      _index = _index.clamp(0, _items.length - 1); // 删的是当前曲
+    }
+    _shuffleHistory.clear();
+    notifyListeners();
+    _persist();
+  }
+
+  /// 把队列里 [from] 索引的歌曲移动到 [to] 索引（长按拖动排序）。
+  void moveItem(int from, int to) {
+    if (from < 0 || from >= _items.length) return;
+    if (to < 0 || to >= _items.length) return;
+    if (from == to) return;
+    final item = _items.removeAt(from);
+    _items.insert(to, item);
+    // 修正当前曲索引，保持「播放中的歌」不变。
+    if (from == _index) {
+      _index = to;
+    } else if (from < _index && to >= _index) {
+      _index = _index - 1;
+    } else if (from > _index && to <= _index) {
+      _index = _index + 1;
+    }
+    _shuffleHistory.clear();
+    notifyListeners();
+    _persist();
   }
 
   int _randomNext() {
@@ -170,5 +285,6 @@ class QueueService extends ChangeNotifier {
     _playing = false;
     _shuffleHistory.clear();
     notifyListeners();
+    _persist();
   }
 }

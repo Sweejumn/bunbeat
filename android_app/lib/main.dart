@@ -82,6 +82,15 @@ class _StartupGateState extends State<_StartupGate> {
         context.read<LibraryService>().restoreLastFolder();
         context.read<ThemeController>().load();
         context.read<BpmDisplayController>().load();
+        // 恢复上次的播放队列 + 当前曲 + 循环/随机模式（恢复到就绪不自动播放）。
+        context.read<QueueService>().loadFromPrefs().then((_) {
+          final q = context.read<QueueService>();
+          final cur = q.current;
+          if (cur != null) {
+            // 把当前曲装载到播放器就绪但不播放，进播放页点播放即可出声。
+            context.read<AudioPlayerService>().loadPaused(cur);
+          }
+        });
       });
     }
   }
