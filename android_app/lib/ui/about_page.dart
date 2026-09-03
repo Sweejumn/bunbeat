@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
-/// 关于页：应用名、版本、简介、免责声明、致谢与使用说明入口。
+import '../services/update_service.dart';
+import 'update_flow.dart';
+
+/// 关于页：应用图标/名称、版本、简介、最新版本公告、致谢，
+/// 以及「检查更新」与「查看 GitHub 源代码」入口。
 class AboutPage extends StatefulWidget {
   const AboutPage({super.key});
 
@@ -11,17 +16,30 @@ class AboutPage extends StatefulWidget {
 
 class _AboutPageState extends State<AboutPage> {
   String? _version;
+  LatestRelease? _latest;
+  bool _loading = true;
 
   @override
   void initState() {
     super.initState();
     _loadVersion();
+    _loadLatest();
   }
 
   Future<void> _loadVersion() async {
     final info = await PackageInfo.fromPlatform();
     if (mounted) {
       setState(() => _version = '${info.version}+${info.buildNumber}');
+    }
+  }
+
+  Future<void> _loadLatest() async {
+    final latest = await UpdateService().fetchLatestRelease();
+    if (mounted) {
+      setState(() {
+        _latest = latest;
+        _loading = false;
+      });
     }
   }
 
@@ -33,21 +51,18 @@ class _AboutPageState extends State<AboutPage> {
       body: ListView(
         padding: const EdgeInsets.all(24),
         children: [
-          // 图标与名称
+          // 图标与名称（图标与桌面启动图标一致）
           Center(
             child: Column(
               children: [
-                Container(
-                  width: 88,
-                  height: 88,
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF34D399), Color(0xFF38BDF8)],
-                    ),
-                    borderRadius: BorderRadius.circular(22),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: Image.asset(
+                    'assets/ic_launcher.png',
+                    width: 88,
+                    height: 88,
+                    fit: BoxFit.cover,
                   ),
-                  child: const Icon(Icons.directions_run,
-                      size: 52, color: Colors.white),
                 ),
                 const SizedBox(height: 12),
                 Text('Bunbeat',
@@ -62,6 +77,8 @@ class _AboutPageState extends State<AboutPage> {
             ),
           ),
           const SizedBox(height: 24),
+
+          // 简介
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -81,25 +98,60 @@ class _AboutPageState extends State<AboutPage> {
             ),
           ),
           const SizedBox(height: 12),
+
+          // 最新版本公告
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('跑步安全提示', style: theme.textTheme.titleSmall),
+                  Text('最新版本公告', style: theme.textTheme.titleSmall),
                   const SizedBox(height: 8),
-                  Text(
-                    '跑步时请留意周围环境与交通，避免在危险路段使用耳机听音。'
-                    '本应用仅提供节奏陪伴与音乐播放，不构成任何运动或健康建议。'
-                    '训练强度请量力而行，如有不适请及时停止。',
-                    style: theme.textTheme.bodyMedium,
-                  ),
+                  if (_loading)
+                    Text(
+                      '正在检查最新版本…',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.outline,
+                      ),
+                    )
+                  else if (_latest == null)
+                    Text(
+                      '获取最新版本信息失败，请确认网络后再试。',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.outline,
+                      ),
+                    )
+                  else ...[
+                    Text(
+                      'v${_latest!.latestVersion}',
+                      style: theme.textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    if (_latest!.publishedAt != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        '更新时间：${_formatTime(_latest!.publishedAt!)}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.outline,
+                        ),
+                      ),
+                    ],
+                    if (_latest!.releaseNotes != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        _latest!.releaseNotes!,
+                        style: theme.textTheme.bodyMedium,
+                      ),
+                    ],
+                  ],
                 ],
               ),
             ),
           ),
           const SizedBox(height: 12),
+
+          // 致谢与开源
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -117,6 +169,31 @@ class _AboutPageState extends State<AboutPage> {
               ),
             ),
           ),
+
+          // 检查更新 / 查看源代码
+          const SizedBox(height: 16),
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.system_update_alt),
+                  title: const Text('检查更新'),
+                  subtitle: const Text('从 GitHub Releases 检查并安装新版本'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => UpdateFlow.checkAndPrompt(context),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.code),
+                  title: const Text('查看 GitHub 源代码'),
+                  subtitle: const Text('在浏览器中查看项目源码与更新记录'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _openRepo(context),
+                ),
+              ],
+            ),
+          ),
+
           const SizedBox(height: 24),
           Center(
             child: Text(
@@ -129,5 +206,31 @@ class _AboutPageState extends State<AboutPage> {
         ],
       ),
     );
+  }
+
+  /// 打开 GitHub 项目主页（系统浏览器）。
+  Future<void> _openRepo(BuildContext context) async {
+    final uri = Uri.parse('https://github.com/Sweejumn/muzrun');
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('无法打开浏览器，请稍后再试')),
+        );
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('无法打开链接：$uri')),
+        );
+      }
+    }
+  }
+
+  /// 格式化发布时间为本地日期时间串。
+  String _formatTime(DateTime t) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${t.year}-${two(t.month)}-${two(t.day)} '
+        '${two(t.hour)}:${two(t.minute)}';
   }
 }

@@ -29,6 +29,20 @@ class UpdateCheck {
 
 enum UpdateStatus { upToDate, available, failed }
 
+/// 最新一次发布的信息，供关于页展示「最新版本公告」。包含发布时间与公告正文。
+class LatestRelease {
+  final String latestVersion; // 如 0.1.0+45
+  final DateTime? publishedAt; // GitHub 上该发布的发布时间
+  final String? releaseNotes; // 公告正文
+  final String? apkUrl; // 对应 APK 下载地址
+  const LatestRelease({
+    required this.latestVersion,
+    this.publishedAt,
+    this.releaseNotes,
+    this.apkUrl,
+  });
+}
+
 class UpdateService {
   /// 检查更新用的 GitHub 仓库（Sweejumn/muzrun）。
   static const String repo = 'Sweejumn/muzrun';
@@ -98,6 +112,57 @@ class UpdateService {
     } catch (_) {
       // 其它解析类异常也归为 failed，绝不影响正常使用。
       return const UpdateCheck(status: UpdateStatus.failed);
+    }
+  }
+
+  /// 获取最新发布的信息（版本号、发布时间、公告正文），供关于页展示。
+  /// 网络失败或尚无发布时返回 null。
+  Future<LatestRelease?> fetchLatestRelease() async {
+    try {
+      final dio = Dio();
+      final resp = await dio.get<Map<String, dynamic>>(
+        _api,
+        options: Options(
+          responseType: ResponseType.json,
+          headers: {
+            'Accept': 'application/vnd.github+json',
+            'User-Agent': 'run-bpm-android',
+          },
+        ),
+      );
+      final data = resp.data;
+      if (data == null) return null;
+
+      final tag = data['tag_name'] as String? ?? '';
+      final latest = _cleanVersion(tag);
+      if (latest.isEmpty) return null;
+
+      DateTime? published;
+      final pubStr = data['published_at'] as String?;
+      if (pubStr != null) {
+        published = DateTime.tryParse(pubStr)?.toLocal();
+      }
+
+      final notes = data['body'] as String?;
+      final assets = data['assets'] as List? ?? const [];
+      String? apkUrl;
+      for (final a in assets) {
+        final name = (a['name'] as String?) ?? '';
+        if (name.toLowerCase().endsWith('.apk')) {
+          apkUrl = a['browser_download_url'] as String?;
+          break;
+        }
+      }
+
+      return LatestRelease(
+        latestVersion: latest,
+        publishedAt: published,
+        releaseNotes:
+            notes == null || notes.trim().isEmpty ? null : notes.trim(),
+        apkUrl: apkUrl,
+      );
+    } catch (_) {
+      return null;
     }
   }
 
