@@ -71,7 +71,7 @@ class _BeatRulerState extends State<BeatRuler>
               ));
             }
 
-            // 打拍标记（琥珀色，只保留最近 20 个）——与绿线同一坐标系。
+            // 打拍标记（琥珀色，只保留最近 20 个）——与主题色线同一坐标系。
             final taps = widget.tapMarks;
             var tl = _lowerBound(taps, from);
             for (var i = tl; i < taps.length; i++) {

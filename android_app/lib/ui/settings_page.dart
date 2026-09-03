@@ -32,28 +32,9 @@ class SettingsPage extends StatelessWidget {
                 children: [
                   Text('主题', style: theme.textTheme.titleSmall),
                   const SizedBox(height: 12),
-                  SegmentedButton<ThemeMode>(
-                    segments: const [
-                      ButtonSegment(
-                        value: ThemeMode.system,
-                        label: Text('跟随系统'),
-                      ),
-                      ButtonSegment(
-                        value: ThemeMode.light,
-                        label: Text('浅色'),
-                      ),
-                      ButtonSegment(
-                        value: ThemeMode.dark,
-                        label: Text('深色'),
-                      ),
-                    ],
-                    selected: {themeCtrl.mode},
-                    // 不显示选中对勾图标，避免三个选项宽度变化导致布局被顶开；
-                    // 选中态仅靠背景填充色区分。
-                    showSelectedIcon: false,
-                    onSelectionChanged: (s) =>
-                        themeCtrl.setMode(s.first),
-                  ),
+                  // 「跟随系统」选项特意更宽（flex 2），其余两个等宽（flex 1），
+                  // 让默认推荐项更醒目。
+                  _ThemeModeSelector(theme: theme, controller: themeCtrl),
                   const SizedBox(height: 16),
                   Text('主题色', style: theme.textTheme.titleSmall),
                   const SizedBox(height: 8),
@@ -84,7 +65,7 @@ class SettingsPage extends StatelessWidget {
             child: SwitchListTile(
               secondary: const Icon(Icons.numbers),
               title: const Text('BPM 保留两位小数'),
-              subtitle: const Text('曲库/推荐/播放页的 BPM 显示两位小数；关闭则按整数显示。（跑步设置除外）'),
+              subtitle: const Text('曲库/推荐/播放页的 BPM 显示两位小数；关闭则按整数显示。'),
               value: bpmCtrl.twoDecimals,
               onChanged: (v) => bpmCtrl.setTwoDecimals(v),
             ),
@@ -131,6 +112,66 @@ class SettingsPage extends StatelessWidget {
         style: theme.textTheme.labelLarge?.copyWith(
           color: theme.colorScheme.primary,
         ),
+      ),
+    );
+  }
+}
+
+/// 三段主题选择条：「跟随系统」更宽（flex 2），「浅色 / 深色」等宽（flex 1）。
+/// 用自定义 Row 而非 SegmentedButton，因为后者强制各段等宽，无法让某项更长。
+class _ThemeModeSelector extends StatelessWidget {
+  final ThemeData theme;
+  final ThemeController controller;
+  const _ThemeModeSelector({required this.theme, required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = <(ThemeMode, String, int)>[
+      (ThemeMode.system, '跟随系统', 2),
+      (ThemeMode.light, '浅色', 1),
+      (ThemeMode.dark, '深色', 1),
+    ];
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      padding: const EdgeInsets.all(3),
+      child: Row(
+        children: [
+          for (final (mode, label, flex) in entries)
+            Expanded(
+              flex: flex,
+              child: Padding(
+                padding: const EdgeInsets.all(1),
+                child: Material(
+                  color: controller.mode == mode
+                      ? theme.colorScheme.primary
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(9),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(9),
+                    onTap: () => controller.setMode(mode),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      child: Text(
+                        label,
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.labelLarge?.copyWith(
+                          color: controller.mode == mode
+                              ? theme.colorScheme.onPrimary
+                              : theme.colorScheme.onSurfaceVariant,
+                          fontWeight: controller.mode == mode
+                              ? FontWeight.bold
+                              : null,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

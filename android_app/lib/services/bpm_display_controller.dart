@@ -1,5 +1,5 @@
 /// BPM 显示格式控制器：是否把歌曲/播放相关的 BPM 保留两位小数显示；
-/// 「跑步设置（运动模式/目标 BPM）」不受此控制。持久化到 SharedPreferences。
+/// 持久化到 SharedPreferences。
 library;
 
 import 'package:flutter/foundation.dart';
