@@ -26,15 +26,6 @@ const List<_MusicSource> _kSources = [
   _MusicSource('酷狗音乐', '/storage/emulated/0/Download/kgmusic/download'),
 ];
 
-/// 把文件夹路径映射成一个简短、可读的来源名（不显示完整路径）。
-String sourceNameForPath(String? path) {
-  if (path == null || path.isEmpty) return '曲库';
-  for (final s in _kSources) {
-    if (path.toLowerCase() == s.path.toLowerCase()) return s.name;
-  }
-  return '本地文件夹';
-}
-
 /// 曲库歌曲排序方式。
 enum _SortMode { scan, titleAZ, titleZA, bpmAsc, bpmDesc, duration }
 
@@ -254,17 +245,9 @@ class _LibraryPageState extends State<LibraryPage> {
         ),
       );
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _FolderHeader(lib: lib, onPick: () => _pickFolder(context, lib)),
-        Expanded(
-          child: _SongList(
-            songs: _visibleSongs(lib),
-            onLongPress: (song) => _showActions(context, lib, song),
-          ),
-        ),
-      ],
+    return _SongList(
+      songs: _visibleSongs(lib),
+      onLongPress: (song) => _showActions(context, lib, song),
     );
   }
 
@@ -427,23 +410,6 @@ class _LibraryPageState extends State<LibraryPage> {
     if (value != null) {
       lib.setManualBpm(song, value);
     }
-  }
-}
-
-class _FolderHeader extends StatelessWidget {
-  final LibraryService lib;
-  final VoidCallback onPick;
-  const _FolderHeader({required this.lib, required this.onPick});
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      leading: const Icon(Icons.folder),
-      // 不显示完整路径，只显示简短的可读来源名。
-      title: Text(sourceNameForPath(lib.folderPath)),
-      subtitle: Text('${lib.songs.length} 首音乐'),
-      trailing: TextButton(onPressed: onPick, child: const Text('更换')),
-    );
   }
 }
 
