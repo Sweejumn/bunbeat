@@ -20,7 +20,7 @@ class HelpSection {
         '或选「自定义文件夹」手动挑选目录；选定后自动扫描导入其中的音乐。'),
     HelpItem('长按操作',
         '长按任一首歌可：归档（从曲库与推荐隐藏，右上「归档」可查看并放回）、'
-        '重新检测 BPM、×2 / ÷2、手动修改 BPM。'),
+        '重新检测 BPM、BPM ×2、手动修改 BPM。'),
     HelpItem('排序与搜索',
         '顶部排序按钮可切换顺序（默认 / 标题 / BPM / 时长）；点搜索按钮可按歌名、歌手筛选。'),
     HelpItem('移除歌曲',
@@ -109,10 +109,14 @@ class _AllHelpDialog extends StatelessWidget {
     final theme = Theme.of(context);
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-      child: SizedBox(
-        width: double.infinity,
-        height: 420,
-        child: Column(
+      // TabBar / TabBarView 必须共享同一个 TabController，
+      // 否则打开时 TabBarView 会因找不到 controller 直接抛错、弹窗打不开。
+      child: DefaultTabController(
+        length: sections.length,
+        child: SizedBox(
+          width: double.infinity,
+          height: 420,
+          child: Column(
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
@@ -150,6 +154,7 @@ class _AllHelpDialog extends StatelessWidget {
               ),
             ),
           ],
+        ),
         ),
       ),
     );

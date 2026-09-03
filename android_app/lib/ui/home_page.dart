@@ -27,7 +27,12 @@ class _HomePageState extends State<HomePage> {
         height: 60,
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
         selectedIndex: _tab,
-        onDestinationSelected: (i) => setState(() => _tab = i),
+        onDestinationSelected: (i) {
+          // 切换页面时立刻收起上一个页面残留的 SnackBar 提示，
+          // 否则加入播放列表后的提示会一直停在底部，切到「播放」页时挡住操作。
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          setState(() => _tab = i);
+        },
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.library_music_outlined),
