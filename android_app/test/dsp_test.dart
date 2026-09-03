@@ -140,6 +140,16 @@ void main() {
       expect(r.phaseReliability!, inInclusiveRange(0.0, 1.0));
     });
 
+    test('干净节拍曲子的可信度较高（拍子对齐，而非局部峰等距）', () {
+      const sr = 22050;
+      // 规则 120 BPM 脉冲：起音峰应几乎全部落在检测出的拍子上，
+      // 可信度（能量加权"落拍"命中率）应明显高于旧版动不动归零的情况。
+      final samples = makeClickTrack(120.0, sr, 12);
+      final r = BpmAnalyzer.analyzePcm(samples, sampleRate: sr);
+      expect(r.bpm, isNotNull);
+      expect(r.confidence, greaterThan(0.5));
+    });
+
     test('超过 60 秒的歌曲：grid 拍子铺满整首歌（不止开头 60s）', () {
       const sr = 22050;
       // 90 秒的 120 BPM 轨道：分析窗口只取前 60s，但拍子网格应一直排到整首歌末尾，

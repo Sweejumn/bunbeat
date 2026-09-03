@@ -20,7 +20,8 @@ import 'package:path_provider/path_provider.dart';
 
 /// 分析产物格式版本：算法/拍点结构变化时递增，使旧缓存失效并强制重新分析。
 /// v3：BPM 不再强制取整到 1 位小数，保留真实精度（使两位小数显示有意义）。
-const int _schemaVersion = 3;
+/// v4：可信度改为「拍子对齐度」语义（不再用局部峰等距度，避免正常歌曲 0%）。
+const int _schemaVersion = 4;
 
 /// 从缓存恢复的一首歌的分析结果。
 class CachedAnalysis {

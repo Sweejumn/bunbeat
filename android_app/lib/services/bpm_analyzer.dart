@@ -120,11 +120,11 @@ class BpmAnalyzer {
       final refined = _refineTempo(ac, coarse);
       final (bpm, _) = _octaveCorrect(ac, refined);
 
-      // 置信度：起音包络相邻强拍间隔的规整度
-      final confidence = _confidence(onset);
       // 默认固定拍子网格 + 三种节拍模式 + 相位可靠性
       final beatMaps = _buildBeatMaps(onset, bpm, total: fullDuration);
       final grid = beatMaps['grid'] ?? <double>[];
+      // 可信度：检测出的拍子能对上多少"强"起音峰（能量加权命中率）
+      final confidence = _confidence(onset, bpm, grid);
       final reliability = _phaseReliability(onset, bpm, grid.isNotEmpty ? grid.first : 0.0);
 
       return BpmResult(
@@ -270,9 +270,17 @@ class BpmAnalyzer {
     return (double.parse(best.toStringAsFixed(6)), corrected);
   }
 
-  static double _confidence(List<double> onset) {
-    if (onset.length < 4) return 0.0;
-    // 对起音包络取局部峰，得到“拍位”序列，衡量间隔规整度
+  /// 可信度：衡量检测出的拍子网格 [grid] 能对上多少「强」起音峰（能量加权命中率）。
+  /// 相比旧版（所有局部峰间隔的变异系数），这个度量对正常编曲更稳健：
+  /// 非节拍的额外局部峰（军鼓/踩镲/鼓花）只要不落在拍子附近就不会拖低得分，
+  /// 只有起音峰整体对不上拍子（自由节奏/强拍不明显）时才归零。
+  static double _confidence(List<double> onset, double bpm, List<double> grid) {
+    if (onset.length < 4 || grid.length < 2) return 0.0;
+    final period = 60.0 / bpm;
+    if (period <= 0) return 0.0;
+    final window = period * 0.12; // ±12% 周期内视为"落在拍子上"
+
+    // 局部峰（略高于左右邻居即算）
     final peaks = <int>[];
     for (int i = 1; i < onset.length - 1; i++) {
       if (onset[i] > onset[i - 1] && onset[i] >= onset[i + 1]) {
@@ -280,18 +288,32 @@ class BpmAnalyzer {
       }
     }
     if (peaks.length < 4) return 0.0;
-    final intervals = <double>[];
-    for (int i = 1; i < peaks.length; i++) {
-      intervals.add((peaks[i] - peaks[i - 1]).toDouble());
+
+    // 只用「强」峰（能量高于中位数的一定比例），弱噪声峰不计
+    final energies = List<double>.of(peaks.map((i) => onset[i]))..sort();
+    final thr = energies[energies.length ~/ 2] * 0.5;
+
+    final frameSec = kHop / kSampleRate;
+    double aligned = 0, weight = 0;
+    var gi = 0;
+    for (final i in peaks) {
+      final e = onset[i];
+      if (e < thr) continue;
+      final t = i * frameSec;
+      // 推进到覆盖 t 的拍（峰与 grid 都递增，单调推进即可）
+      while (gi + 1 < grid.length && grid[gi + 1] < t) {
+        gi++;
+      }
+      final d = (t - grid[gi]).abs();
+      final dNext = gi + 1 < grid.length ? (t - grid[gi + 1]).abs() : double.infinity;
+      final bestD = d < dNext ? d : dNext;
+      if (bestD <= window) {
+        aligned += e;
+      }
+      weight += e;
     }
-    final mean = intervals.reduce((a, b) => a + b) / intervals.length;
-    if (mean <= 0) return 0.0;
-    final variance = intervals
-        .map((iv) => (iv - mean) * (iv - mean))
-        .reduce((a, b) => a + b) /
-        intervals.length;
-    final cv = math.sqrt(variance) / mean;
-    return (1.0 - cv * 3.0).clamp(0.0, 1.0);
+    if (weight <= 0) return 0.0;
+    return (aligned / weight).clamp(0.0, 1.0);
   }
 
   /// 以目标 BPM 生成固定等距拍子网格（秒），并推定相位。

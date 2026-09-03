@@ -23,8 +23,6 @@ class RecommendPage extends StatefulWidget {
 
 class _RecommendPageState extends State<RecommendPage> {
   final Set<String> _selected = {};
-  // 仅在运动区间（mode）切换时才自动重选，避免拖动滑块时每帧整页重建导致不跟手。
-  int _lastAutoMode = -1;
 
   @override
   Widget build(BuildContext context) {
@@ -33,22 +31,6 @@ class _RecommendPageState extends State<RecommendPage> {
       ..sort((a, b) => a.distance.compareTo(b.distance));
     final eligible = recs.where((r) => r.song.hasBpm).length;
     final target = lib.targetBpm;
-
-    // 对齐 Web：仅在区间变化时自动勾选所有可变速歌曲（红色 ✕ 不自动选），
-    // 同一区间内的细微 BPM 拖动不触发整页重建，保证滑块跟手。
-    final modeKey = modeFromBpm(target).index;
-    if (_lastAutoMode != modeKey) {
-      _lastAutoMode = modeKey;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        setState(() {
-          _selected.clear();
-          for (final r in lib.recommend(target: target)) {
-            if (_processable(r, target)) _selected.add(r.song.id);
-          }
-        });
-      });
-    }
 
     return Scaffold(
       appBar: AppBar(
@@ -89,71 +71,85 @@ class _RecommendPageState extends State<RecommendPage> {
                 ),
               ),
             ),
-      body: ListView(
-        padding: EdgeInsets.fromLTRB(16, 16, 16, _selected.isEmpty ? 16 : 96),
+      body: Column(
         children: [
-          // 运动模式选择（与 Web 版 ModePicker 对齐：彩色滑块 + 快捷芯片 + 手动输入）。
-          ModePicker(
-            bpm: lib.targetBpm,
-            onChanged: (v) {
-              setState(() {
-                lib.targetBpm = v;
-              });
-            },
-          ),
-          const SizedBox(height: 16),
-          const SizedBox(height: 8),
-          if (eligible > 0)
-            Row(
+          // 固定头部：运动模式 + 选择按钮。翻动歌曲列表时保持可见，方便反复点选。
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Column(
               children: [
-                Text('选择', style: Theme.of(context).textTheme.bodyMedium),
-                const Spacer(),
-                TextButton(
-                  onPressed: () {
+                // 运动模式选择（与 Web 版 ModePicker 对齐：彩色滑块 + 快捷芯片 + 手动输入）。
+                ModePicker(
+                  bpm: lib.targetBpm,
+                  onChanged: (v) {
                     setState(() {
-                      _selected.clear();
-                      for (final r in recs) {
-                        if (_processable(r, lib.targetBpm)) {
-                          _selected.add(r.song.id);
-                        }
-                      }
+                      lib.targetBpm = v;
                     });
                   },
-                  child: const Text('自动勾选可变速'),
                 ),
-                TextButton(
-                  onPressed: () {
-                    setState(() {
-                      _selected.clear();
-                      for (final r in recs) {
-                        _selected.add(r.song.id);
-                      }
-                    });
-                  },
-                  child: const Text('全选'),
-                ),
-                TextButton(
-                  onPressed: () => setState(() => _selected.clear()),
-                  child: const Text('全不选'),
-                ),
+                const SizedBox(height: 12),
+                if (eligible > 0)
+                  Row(
+                    children: [
+                      Text('选择', style: Theme.of(context).textTheme.bodyMedium),
+                      const Spacer(),
+                      TextButton(
+                        onPressed: () {
+                          setState(() {
+                            _selected.clear();
+                            for (final r in recs) {
+                              if (_processable(r, lib.targetBpm)) {
+                                _selected.add(r.song.id);
+                              }
+                            }
+                          });
+                        },
+                        child: const Text('自动勾选可变速'),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          setState(() {
+                            _selected.clear();
+                            for (final r in recs) {
+                              _selected.add(r.song.id);
+                            }
+                          });
+                        },
+                        child: const Text('全选'),
+                      ),
+                      TextButton(
+                        onPressed: () => setState(() => _selected.clear()),
+                        child: const Text('全不选'),
+                      ),
+                    ],
+                  ),
               ],
             ),
-          const SizedBox(height: 4),
-          ...recs.map((r) => _RecTile(
-                r: r,
-                targetBpm: target,
-                selected: _selected.contains(r.song.id),
-                onToggle: () => setState(() {
-                  if (!_selected.remove(r.song.id)) {
-                    _selected.add(r.song.id);
-                  }
-                }),
-              )),
-          if (recs.isEmpty)
-            const Padding(
-              padding: EdgeInsets.all(24),
-              child: Center(child: Text('请先在「曲库」选择文件夹并等待 BPM 分析')),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: ListView(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, _selected.isEmpty ? 16 : 96),
+              children: [
+                ...recs.map((r) => _RecTile(
+                      r: r,
+                      targetBpm: target,
+                      selected: _selected.contains(r.song.id),
+                      onToggle: () => setState(() {
+                        if (!_selected.remove(r.song.id)) {
+                          _selected.add(r.song.id);
+                        }
+                      }),
+                    )),
+                if (recs.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Center(
+                        child: Text('请先在「曲库」选择文件夹并等待 BPM 分析')),
+                  ),
+              ],
             ),
+          ),
         ],
       ),
     );
