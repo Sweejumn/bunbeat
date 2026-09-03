@@ -85,15 +85,12 @@ class UpdateService {
               notes == null || notes.trim().isEmpty ? null : notes.trim(),
         ),
       );
-    } on DioException catch (e) {
-      // GitHub 对「从未发布 Release」的仓库，/releases/latest 会返回 404，
-      // 这种情况等同于没有可用更新，不当作网络失败。
-      if (e.response?.statusCode == 404) {
-        return const UpdateCheck(status: UpdateStatus.upToDate);
-      }
+    } on DioException catch (_) {
+      // 任何网络/HTTP 错误（含 404：仓库还没发布 Release）都归为 failed，
+      // 便于调试时区分「真网络问题」与「有更新」，不当作已是最新。
       return const UpdateCheck(status: UpdateStatus.failed);
     } catch (_) {
-      // 任何网络/解析失败都归为 failed，绝不影响正常使用。
+      // 其它解析类异常也归为 failed，绝不影响正常使用。
       return const UpdateCheck(status: UpdateStatus.failed);
     }
   }
