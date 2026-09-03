@@ -3,7 +3,7 @@ description: "RUN BPM — 基于 BPM 的本地跑步音乐播放器（安卓离�
 publish_to: "none"
 # 测试版版本号：0.x.y+z（z 为内部构建号，每次迭代替换递增）。
 # 仍处测试期，功能未全部完善、存在已知 bug，故不用 1.x 正式版号。
-version: 0.1.0+11
+version: 0.1.0+12
 
 environment:
   sdk: ">=3.3.0 <4.0.0"

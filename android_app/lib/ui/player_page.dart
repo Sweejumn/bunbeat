@@ -64,6 +64,10 @@ class _PlayerPageState extends State<PlayerPage> {
       context.read<QueueService>().setPlaying(ps.playing);
       if (ps.playing) {
         _onPlaybackStart(player);
+      } else {
+        // 外部暂停（控制中心/耳机/来电打断等）也要停节拍器：
+        // 之前只在 _toggle 里停，外部暂停时节拍器仍继续响。
+        context.read<Metronome>().setEnabled(false);
       }
     });
     _durSub = player.durationStream.listen((_) {
@@ -252,116 +256,165 @@ class _PlayerPageState extends State<PlayerPage> {
           ),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    // 歌曲封面（无封面时显示占位图标）
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: SizedBox(
-                        width: 96,
-                        height: 96,
-                        child: artwork != null
-                            ? Image.file(
-                                File(artwork),
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) =>
-                                    const _ArtworkPlaceholder(),
-                              )
-                            : const _ArtworkPlaceholder(),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+      body: Column(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Row(
                         children: [
-                          Text(current.filePath.split('/').last,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.titleLarge),
-                          const SizedBox(height: 8),
-                          Text('${current.originalBpm.round()}→${current.targetBpm.round()} BPM'),
-                          Text('变速 ×${speed.toStringAsFixed(2)}'),
-                          Text('实际节奏 ≈ ${displayBpm.round()} BPM',
-                              style: Theme.of(context).textTheme.bodySmall),
+                          // 歌曲封面（无封面时显示占位图标）
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: SizedBox(
+                              width: 96,
+                              height: 96,
+                              child: artwork != null
+                                  ? Image.file(
+                                      File(artwork),
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) =>
+                                          const _ArtworkPlaceholder(),
+                                    )
+                                  : const _ArtworkPlaceholder(),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(current.filePath.split('/').last,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style:
+                                        Theme.of(context).textTheme.titleLarge),
+                                const SizedBox(height: 8),
+                                Text(
+                                    '${current.originalBpm.round()}→${current.targetBpm.round()} BPM'),
+                                Text('变速 ×${speed.toStringAsFixed(2)}'),
+                                Text('实际节奏 ≈ ${displayBpm.round()} BPM',
+                                    style: Theme.of(context).textTheme.bodySmall),
+                              ],
+                            ),
+                          ),
                         ],
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: 8),
+                  _buildBeatRuler(beatList, player, _tapMarks),
+                  const SizedBox(height: 8),
+                  _buildBeatControls(context, met, player, current.targetBpm),
+                  const SizedBox(height: 12),
+                  _buildMetronomeControls(context, met, player, current.targetBpm),
+                ],
               ),
             ),
-            const SizedBox(height: 8),
-            _buildBeatRuler(beatList, player, _tapMarks),
-            const SizedBox(height: 8),
-            _buildBeatControls(context, met, player, current.targetBpm),
-            const SizedBox(height: 12),
-            _buildProgress(position, duration, player),
-            const SizedBox(height: 8),
-            // 随机播放 + 单曲/列表循环开关
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                IconButton(
-                  tooltip: queue.shuffle ? '随机播放：开' : '随机播放：关',
-                  icon: Icon(
-                    Icons.shuffle,
-                    color: queue.shuffle ? Theme.of(context).colorScheme.primary : null,
+          ),
+          // 底部固定控制条：进度 + 随机/单曲循环 + 上一首/播放暂停/下一首，
+          // 常驻可见，不必翻到列表底部。
+          _buildPlaybackBar(context, queue, player, position, duration),
+        ],
+      ),
+    );
+  }
+
+  /// 底部固定控制条：进度滑杆 + 随机/单曲循环开关 + 播放控制，全部常驻可见。
+  /// 随机与单曲循环都是「点一下切换」的独立开关（不做互斥循环），且与播放键同处一行，
+  /// 节省垂直空间；进度时间字号调小。
+  Widget _buildPlaybackBar(
+    BuildContext context,
+    QueueService queue,
+    AudioPlayer player,
+    Duration position,
+    Duration duration,
+  ) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Material(
+      color: colorScheme.surfaceContainerHighest,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 进度滑杆 + 时间（小字号）
+              Row(
+                children: [
+                  Text(_fmt(position),
+                      style: const TextStyle(
+                          fontSize: 12, fontFeatures: [FontFeature.tabularFigures()])),
+                  Expanded(
+                    child: Slider(
+                      value: duration.inMilliseconds > 0
+                          ? (position.inMilliseconds / duration.inMilliseconds)
+                              .clamp(0.0, 1.0)
+                          : 0.0,
+                      onChanged: (v) {
+                        if (duration.inMilliseconds > 0) {
+                          player.seek(Duration(
+                              milliseconds:
+                                  (v * duration.inMilliseconds).round()));
+                        }
+                      },
+                    ),
                   ),
-                  onPressed: () => context.read<QueueService>().setShuffle(!queue.shuffle),
-                ),
-                const SizedBox(width: 40),
-                IconButton(
-                  tooltip: _loopLabel(queue.loopMode),
-                  icon: Icon(
-                    queue.repeatingOne ? Icons.repeat_one : Icons.repeat,
-                    color: queue.loopMode != LoopMode.off
-                        ? Theme.of(context).colorScheme.primary
-                        : null,
+                  Text(_fmt(duration),
+                      style: const TextStyle(
+                          fontSize: 12, fontFeatures: [FontFeature.tabularFigures()])),
+                ],
+              ),
+              // 播放控制一行：随机 / 上一首 / 播放暂停 / 下一首 / 单曲循环
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    tooltip: queue.shuffle ? '随机播放：开' : '随机播放：关',
+                    icon: Icon(
+                      Icons.shuffle,
+                      color: queue.shuffle ? colorScheme.primary : null,
+                    ),
+                    onPressed: () =>
+                        context.read<QueueService>().setShuffle(!queue.shuffle),
                   ),
-                  onPressed: () {
-                    final q = context.read<QueueService>();
-                    final next = switch (q.loopMode) {
-                      LoopMode.off => LoopMode.all,
-                      LoopMode.all => LoopMode.one,
-                      LoopMode.one => LoopMode.off,
-                    };
-                    q.setLoopMode(next);
-                  },
-                ),
-              ],
-            ),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                IconButton(
-                  iconSize: 36,
-                  icon: const Icon(Icons.skip_previous),
-                  onPressed: () => _prev(context),
-                ),
-                IconButton(
-                  iconSize: 56,
-                  icon: Icon(queue.playing ? Icons.pause_circle : Icons.play_circle),
-                  onPressed: () => _toggle(context),
-                ),
-                IconButton(
-                  iconSize: 36,
-                  icon: const Icon(Icons.skip_next),
-                  onPressed: () => _next(context),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _buildMetronomeControls(context, met, player, current.targetBpm),
+                  IconButton(
+                    iconSize: 36,
+                    icon: const Icon(Icons.skip_previous),
+                    onPressed: () => _prev(context),
+                  ),
+                  IconButton(
+                    iconSize: 56,
+                    icon: Icon(
+                        queue.playing ? Icons.pause_circle : Icons.play_circle),
+                    onPressed: () => _toggle(context),
+                  ),
+                  IconButton(
+                    iconSize: 36,
+                    icon: const Icon(Icons.skip_next),
+                    onPressed: () => _next(context),
+                  ),
+                  IconButton(
+                    tooltip: _loopLabel(queue.loopMode),
+                    icon: Icon(
+                      queue.repeatingOne ? Icons.repeat_one : Icons.repeat,
+                      color: queue.repeatingOne ? colorScheme.primary : null,
+                    ),
+                    // 单曲循环：点一下切换开启/关闭（不做 off/all/one 循环）。
+                    onPressed: () {
+                      final q = context.read<QueueService>();
+                      q.setLoopMode(q.repeatingOne ? LoopMode.all : LoopMode.one);
+                    },
+                  ),
+                ],
+              ),
             ],
           ),
         ),
@@ -375,31 +428,6 @@ class _PlayerPageState extends State<PlayerPage> {
       LoopMode.all => '列表循环：开启',
       LoopMode.one => '单曲循环：开启',
     };
-  }
-
-  Widget _buildProgress(Duration position, Duration duration, AudioPlayer player) {
-    final seconds = duration.inMilliseconds > 0
-        ? (position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0)
-        : 0.0;
-    return Column(
-      children: [
-        Slider(
-          value: seconds,
-          onChanged: (v) {
-            if (duration.inMilliseconds > 0) {
-              player.seek(Duration(milliseconds: (v * duration.inMilliseconds).round()));
-            }
-          },
-        ),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(_fmt(position)),
-            Text(_fmt(duration)),
-          ],
-        ),
-      ],
-    );
   }
 
   String _fmt(Duration d) {
