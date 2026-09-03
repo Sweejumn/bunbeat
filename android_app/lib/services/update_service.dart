@@ -44,8 +44,8 @@ class LatestRelease {
 }
 
 class UpdateService {
-  /// 检查更新用的 GitHub 仓库（Sweejumn/muzrun）。
-  static const String repo = 'Sweejumn/muzrun';
+  /// 检查更新用的 GitHub 仓库（Sweejumn/bunbeat）。
+  static const String repo = 'Sweejumn/bunbeat';
   static const String _api =
       'https://api.github.com/repos/$repo/releases/latest';
   static const MethodChannel _installChannel =

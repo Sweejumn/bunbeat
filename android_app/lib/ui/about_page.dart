@@ -210,7 +210,7 @@ class _AboutPageState extends State<AboutPage> {
 
   /// 打开 GitHub 项目主页（系统浏览器）。
   Future<void> _openRepo(BuildContext context) async {
-    final uri = Uri.parse('https://github.com/Sweejumn/muzrun');
+    final uri = Uri.parse('https://github.com/Sweejumn/bunbeat');
     try {
       final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!ok && context.mounted) {
