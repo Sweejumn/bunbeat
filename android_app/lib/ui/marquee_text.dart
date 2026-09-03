@@ -3,9 +3,11 @@ import 'package:flutter/material.dart';
 /// 单行文字若超出可用宽度则自动水平滚动显示（跑马灯/横滚），
 /// 否则静止显示为单行省略。用于曲库/推荐里较长的歌名。
 ///
-/// 采用「双文本段 + Transform.translate」的标准无缝跑马灯：
-/// 绘制两份相同文字，一周期内整体左移一个「文字宽 + 间距」，
-/// 首份完全滚出时第二份恰好接上，视觉上连续滚动、永不停顿。
+/// 实现：在 SingleChildScrollView 里渲染两份相同文字（中间隔一段空隙）。
+/// 动画让内容在 0 → (文字宽 + 空隙) 之间循环滚动，这个位移正好让
+/// 第二份接上第一份，视觉无缝；且永不滚到滚动条末尾，因此不会出现
+/// "滚到底停很久"。用 SingleChildScrollView 是为了在真实 ListTile
+/// 布局中稳定渲染（比带约束的 Transform/OverflowBox 更可靠）。
 class MarqueeText extends StatefulWidget {
   const MarqueeText(
     this.text, {
@@ -26,20 +28,32 @@ class _MarqueeTextState extends State<MarqueeText>
   static const double _kGap = 48.0;
   static const Duration _duration = Duration(seconds: 6);
 
+  final ScrollController _controller = ScrollController();
   late final AnimationController _anim;
-  // 需要的动画进度：一段需要移动的总距离（文字宽 + 间距）。
+  // 一周期滚动的距离 = 文字宽 + 空隙。
   double _cycle = 0;
+  // 是否确实需要滚动（文字超出可用宽度）。
+  bool _scrolling = false;
 
   @override
   void initState() {
     super.initState();
     _anim = AnimationController(vsync: this, duration: _duration)..repeat();
+    _anim.addListener(_tick);
   }
 
   @override
   void dispose() {
     _anim.dispose();
+    _controller.dispose();
     super.dispose();
+  }
+
+  void _tick() {
+    if (!_scrolling || !_controller.hasClients) return;
+    // 在 0 → _cycle 间循环滚动；因存在第二份文字，这个位移恰好无缝衔接，
+    // 且永远不会滚到滚动条末尾，所以不会在尽头停顿。
+    _controller.jumpTo(_anim.value * _cycle);
   }
 
   @override
@@ -55,8 +69,9 @@ class _MarqueeTextState extends State<MarqueeText>
         )..layout();
         final textWidth = tp.width;
 
-        // 只有当文字超出可用宽度时才滚动。
+        // 文字未超出宽度：静止显示单行省略。
         if (textWidth <= maxWidth) {
+          _scrolling = false;
           _cycle = 0;
           return Text(
             widget.text,
@@ -66,45 +81,31 @@ class _MarqueeTextState extends State<MarqueeText>
           );
         }
 
-        // 一周期移动 文本宽 + 间距；两段紧邻即可无缝。
-        // OverflowBox 给内部 Row 无界宽度（自然尺寸可超出裁剪区），由外层
-        // ClipRect 负责裁剪；这是用于无缝跑马灯、故意允许溢出的标准做法，
-        // 不会触发 RenderFlex 溢出报错，滚动永不停顿。
+        _scrolling = true;
         _cycle = textWidth + _kGap;
-
         return ClipRect(
-          child: AnimatedBuilder(
-            animation: _anim,
-            builder: (context, _) {
-              // 每帧从 _anim.value 重新计算位移，确保真正持续滚动。
-              final offset = -(_anim.value * _cycle);
-              return Transform.translate(
-                offset: Offset(offset, 0),
-                child: OverflowBox(
-                  minWidth: 0,
-                  maxWidth: double.infinity,
-                  alignment: Alignment.centerLeft,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        widget.text,
-                        style: style,
-                        maxLines: 1,
-                        softWrap: false,
-                      ),
-                      const SizedBox(width: 48),
-                      Text(
-                        widget.text,
-                        style: style,
-                        maxLines: 1,
-                        softWrap: false,
-                      ),
-                    ],
-                  ),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            controller: _controller,
+            physics: const NeverScrollableScrollPhysics(),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  widget.text,
+                  style: style,
+                  maxLines: 1,
+                  softWrap: false,
                 ),
-              );
-            },
+                const SizedBox(width: 48),
+                Text(
+                  widget.text,
+                  style: style,
+                  maxLines: 1,
+                  softWrap: false,
+                ),
+              ],
+            ),
           ),
         );
       },
