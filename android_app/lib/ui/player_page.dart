@@ -38,7 +38,7 @@ class PlayerPage extends StatefulWidget {
   State<PlayerPage> createState() => _PlayerPageState();
 }
 
-class _PlayerPageState extends State<PlayerPage> {
+class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   double _metVolume = 0.5;
   double _musicVolume = 1.0;
   // 下列设置持久化到 SharedPreferences（对应 Web 的 localStorage）：
@@ -59,6 +59,9 @@ class _PlayerPageState extends State<PlayerPage> {
   StreamSubscription<ProcessingState>? _procSub;
   bool _handlingEnded = false;
 
+  // 串行化写盘：保证多次 _savePref 按顺序完整执行，避免 fire-and-forget 并发丢写。
+  Future<void> _saveChain = Future.value();
+
   static const String _prefMetOn = 'runbpm.metronomeOn';
   static const String _prefPhaseNudge = 'runbpm.phaseNudge';
   static const String _prefBeatMode = 'runbpm.beatMode';
@@ -69,6 +72,7 @@ class _PlayerPageState extends State<PlayerPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // 先用默认值初始化，异步读盘后再补用持久化值（读盘很快，UI 一帧内即到位）。
     _activeBeatMode = BeatMode.grid;
     _phaseNudgePct = 0.0;
@@ -132,18 +136,48 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   Future<void> _savePref(String key, Object value) async {
-    final prefs = await SharedPreferences.getInstance();
-    switch (value) {
-      case final bool b:
-        await prefs.setBool(key, b);
-      case final double d:
-        await prefs.setDouble(key, d);
-      case final String s:
-        await prefs.setString(key, s);
-      case final int i:
-        await prefs.setInt(key, i);
-      default:
-        break;
+    // 串行排队写入：前一个写完成后再写下一个，保证最终值落盘、顺序一致。
+    _saveChain = _saveChain.then((_) async {
+      final prefs = await SharedPreferences.getInstance();
+      switch (value) {
+        case final bool b:
+          await prefs.setBool(key, b);
+        case final double d:
+          await prefs.setDouble(key, d);
+        case final String s:
+          await prefs.setString(key, s);
+        case final int i:
+          await prefs.setInt(key, i);
+        default:
+          break;
+      }
+    });
+    return _saveChain;
+  }
+
+  /// 把当前内存中的设置一次性全部写盘（含音量/偏差/节拍/模式等）。
+  /// 在 App 进入后台或退出前调用，确保「改完音量→退出」也能保存，
+  /// 不依赖 onChanged 的火性异步写是否及时完成。
+  Future<void> _flushPrefs() async {
+    _saveChain = _saveChain.then((_) async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(_prefMusicVolume, _musicVolume);
+      await prefs.setDouble(_prefMetVolume, _metVolume);
+      await prefs.setDouble(_prefPhaseNudge, _phaseNudgePct);
+      await prefs.setBool(_prefMetOn, _metEnabled);
+      await prefs.setBool(_prefTapSound, _tapSoundOn);
+      await prefs.setString(_prefBeatMode, _activeBeatMode.name);
+    });
+    return _saveChain;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 进入后台/被销毁前把最新音量等设置强制落盘，避免丢失。
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached ||
+        state == AppLifecycleState.inactive) {
+      _flushPrefs();
     }
   }
 
@@ -161,6 +195,7 @@ class _PlayerPageState extends State<PlayerPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _posSub?.cancel();
     _stateSub?.cancel();
     _durSub?.cancel();
@@ -868,8 +903,9 @@ class _PlayerPageState extends State<PlayerPage> {
                         onChanged: (v) {
                           setState(() => _musicVolume = v);
                           player.setVolume(v);
-                          _savePref(_prefMusicVolume, v);
                         },
+                        // 拖动结束再写盘一次（实时不变调，减少并发异步写盘竞态）。
+                        onChangeEnd: (v) => _savePref(_prefMusicVolume, v),
                       ),
                     ],
                   ),
@@ -886,8 +922,8 @@ class _PlayerPageState extends State<PlayerPage> {
                         onChanged: (v) {
                           setState(() => _metVolume = v);
                           met.setVolume(v);
-                          _savePref(_prefMetVolume, v);
                         },
+                        onChangeEnd: (v) => _savePref(_prefMetVolume, v),
                       ),
                     ],
                   ),
