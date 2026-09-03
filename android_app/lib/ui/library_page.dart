@@ -182,7 +182,7 @@ class _LibraryPageState extends State<LibraryPage> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // 顶部操作条：添加音乐（常驻）+ 排序 + 搜索。
+          // 顶部操作条：音源按钮（首次进入为「添加音乐」，选过文件夹后显示「音源」，点击功能相同）+ 排序 + 搜索。
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
             child: Row(
@@ -191,7 +191,7 @@ class _LibraryPageState extends State<LibraryPage> {
                   child: FilledButton.icon(
                     onPressed: () => _addMusic(context, lib),
                     icon: const Icon(Icons.add),
-                    label: const Text('添加音乐'),
+                    label: Text(lib.folderPath == null ? '添加音乐' : '音源'),
                   ),
                 ),
                 const SizedBox(width: 4),
