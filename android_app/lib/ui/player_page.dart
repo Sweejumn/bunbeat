@@ -15,6 +15,22 @@ import '../services/queue_service.dart';
 import 'beat_ruler.dart';
 import 'settings_page.dart';
 
+/// 由一批打拍点计算 BPM。
+/// 取相邻媒体时间差、过滤 ≤0.1s（双击/误触/seek 回退）、取中位后返回 60/中位。
+/// **不四舍五入成整数**：中位间隔的 ~1ms 精度能让 BPM 可靠到 1~2 位小数，
+/// 以便两位小数显示有意义（否则始终是 .00）。不足 2 个有效间隔返回 null。
+double? computeTapBpm(List<double> taps) {
+  final intervals = <double>[];
+  for (var i = 1; i < taps.length; i++) {
+    final d = taps[i] - taps[i - 1];
+    if (d > 0.1) intervals.add(d);
+  }
+  if (intervals.length < 2) return null;
+  intervals.sort();
+  final median = intervals[intervals.length ~/ 2];
+  return 60.0 / median;
+}
+
 class PlayerPage extends StatefulWidget {
   const PlayerPage({super.key});
 
@@ -731,18 +747,11 @@ class _PlayerPageState extends State<PlayerPage> {
       met.reAnchor(player.position);
     }
     if (_tapMediaSec.length >= 8) {
-      // 对齐 Web 版 TapBpm：取本批相邻媒体时间差、过滤 ≤0.1s（双击/误触/seek
-      // 回退）、取中位、四舍五入整数 BPM；算完重置本批，以便下一次连续 8 次重算。
-      final intervals = <double>[];
-      for (var i = 1; i < _tapMediaSec.length; i++) {
-        final d = _tapMediaSec[i] - _tapMediaSec[i - 1];
-        if (d > 0.1) intervals.add(d);
+      final bpm = computeTapBpm(_tapMediaSec);
+      if (bpm != null) {
+        _tapBpm = bpm;
       }
-      if (intervals.length >= 2) {
-        intervals.sort();
-        final median = intervals[intervals.length ~/ 2];
-        _tapBpm = (60.0 / median).roundToDouble();
-      }
+      // 算完重置本批，以便下一次连续 8 次重算（对齐 Web 版 TapBpm）。
       _tapMediaSec.clear();
       _lastTapAtMs = 0;
     }
