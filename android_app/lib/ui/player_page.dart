@@ -287,7 +287,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     final position = player.position;
     final duration = player.duration ?? Duration.zero;
     final speed = current.speed;
-    final displayBpm = current.originalBpm * speed;
 
     // 从曲库找到当前曲目以读取内嵌封面 + 拍点/相位可靠性。
     final lib = context.watch<LibraryService>();
@@ -360,8 +359,6 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                                 Text(
                                     '${context.read<BpmDisplayController>().format(current.originalBpm)}→${context.read<BpmDisplayController>().format(current.targetBpm)} BPM'),
                                 Text('变速 ×${speed.toStringAsFixed(2)}'),
-                                Text('实际节奏 ≈ ${context.read<BpmDisplayController>().format(displayBpm)} BPM',
-                                    style: Theme.of(context).textTheme.bodySmall),
                               ],
                             ),
                           ),
