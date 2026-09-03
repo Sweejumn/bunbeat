@@ -143,5 +143,21 @@ void main() {
       expect(r.phaseReliability, isNotNull);
       expect(r.phaseReliability!, inInclusiveRange(0.0, 1.0));
     });
+
+    test('超过 60 秒的歌曲：grid 拍子铺满整首歌（不止开头 60s）', () {
+      const sr = 22050;
+      // 90 秒的 120 BPM 轨道：分析窗口只取前 60s，但拍子网格应一直排到整首歌末尾，
+      // 否则拍点标尺在歌曲后半段会没有绿线。
+      final samples = makeClickTrack(120.0, sr, 90);
+      final r = BpmAnalyzer.analyzePcm(samples, sampleRate: sr);
+      expect(r.bpm, isNotNull);
+      final grid = r.beatMaps!['grid']!;
+      expect(grid, isNotEmpty);
+      // 网格最后一个拍子应明显越过 60s 分析窗口（接近整首歌 90s）。
+      expect(grid.last, greaterThan(60.0));
+      // light/snap 也继承了铺满的性质（在无起音的尾部回退到等距 grid）。
+      expect(r.beatMaps!['light']!.last, greaterThan(60.0));
+      expect(r.beatMaps!['snap']!.last, greaterThan(60.0));
+    });
   });
 }

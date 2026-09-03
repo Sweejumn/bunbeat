@@ -7,6 +7,8 @@
 ///  - 为判断「文件是否已变更」，记录源文件的 size 与 mtime；一旦源文件在磁盘上变化，
 ///    缓存即视为失效，重新分析（被替换/更新的歌曲会正确刷新）。
 ///  - 封面从临时目录拷贝进缓存目录持久保存，重新打开时不再依赖临时目录。
+///  - schemaVersion：分析算法/产物格式变化时递增，强制旧条目失效并重新分析，
+///    从而让 BPM/拍点的改进（例如拍子铺满整首歌）能应用到已分析过的歌曲。
 library;
 
 import 'dart:convert';
@@ -15,6 +17,9 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+
+/// 分析产物格式版本：算法/拍点结构变化时递增，使旧缓存失效并强制重新分析。
+const int _schemaVersion = 2;
 
 /// 从缓存恢复的一首歌的分析结果。
 class CachedAnalysis {
@@ -88,6 +93,8 @@ class AnalysisCache {
       final mtime = map['fileMtime'];
       if (size is int && size != stat.size) return null;
       if (mtime is int && mtime != stat.modified.millisecondsSinceEpoch) return null;
+      // 分析产物版本不匹配 → 失效并重新分析（让算法/拍点改进应用到旧歌曲）
+      if (map['schemaVersion'] != _schemaVersion) return null;
 
       final beatTimes = (map['beatTimes'] as List?)
           ?.map((e) => (e as num).toDouble())
@@ -137,6 +144,7 @@ class AnalysisCache {
       final dir = await _cacheDir();
       final stat = await File(filePath).stat();
       final map = <String, dynamic>{
+        'schemaVersion': _schemaVersion,
         'bpm': bpm,
         'confidence': confidence,
         'duration': duration,

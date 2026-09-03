@@ -85,9 +85,12 @@ class BpmAnalyzer {
         error: '音频过短，无法可靠检测 BPM',
       );
     }
-    // 仅分析前 60 秒（加快速度）
+    // 仅分析前 60 秒（加快速度）；但拍子网格会按整首歌时长铺满，见下面。
     final maxLen = sampleRate * 60;
     final data = samples.length > maxLen ? samples.sublist(0, maxLen) : samples;
+    // 整首歌的时长（秒）：相位/BPM 从前 60s 分析窗口推定，
+    // 但 grid/light/snap 拍子时间轴要铺满整首歌，标尺后段才有绿线。
+    final fullDuration = samples.length / sampleRate;
 
     try {
       final onset = _onsetStrengthFlux(data, sampleRate);
@@ -120,14 +123,14 @@ class BpmAnalyzer {
       // 置信度：起音包络相邻强拍间隔的规整度
       final confidence = _confidence(onset);
       // 默认固定拍子网格 + 三种节拍模式 + 相位可靠性
-      final beatMaps = _buildBeatMaps(onset, bpm);
+      final beatMaps = _buildBeatMaps(onset, bpm, total: fullDuration);
       final grid = beatMaps['grid'] ?? <double>[];
       final reliability = _phaseReliability(onset, bpm, grid.isNotEmpty ? grid.first : 0.0);
 
       return BpmResult(
         bpm: bpm,
         confidence: confidence,
-        duration: data.length / sampleRate,
+        duration: fullDuration,
         beatOffset: grid.isNotEmpty ? grid.first : null,
         beatTimes: grid,
         beatMaps: beatMaps,
@@ -290,10 +293,12 @@ class BpmAnalyzer {
   }
 
   /// 以目标 BPM 生成固定等距拍子网格（秒），并推定相位。
-  static List<double> _buildGrid(List<double> onset, double bpm) {
+  /// 相位从 [onset]（通常仅为歌曲前 60s 的分析窗口）推定，但网格会一直铺满到
+  /// [total]（整首歌时长）——这样拍点标尺在歌曲后段也有连续的拍子，
+  /// 而不是只在开头一段有绿线。
+  static List<double> _buildGrid(List<double> onset, double bpm, {required double total}) {
     if (bpm <= 0) return <double>[];
     final period = 60.0 / bpm;
-    final total = onset.length * kHop / kSampleRate;
     // 用起音能量定位相位：取每个周期内能量最强的位置
     final phase = _findPhase(onset, period);
     final times = <double>[];
@@ -326,17 +331,22 @@ class BpmAnalyzer {
   }
 
   /// 生成三种节拍模式的时间轴（原始时间轴秒）：
-  ///   grid（固定拍子，完全等距）/
-  ///   light（轻跟随，每拍在等距点 ±5% 内贴向起音）/
-  ///   snap（跟随起音，±12% 内吸附打击点）。
+  ///   grid（固定拍子，完全等距，铺满整首歌）/
+  ///   light（轻跟随，每拍在等距点 ±5% 内贴向起音；超出分析窗口的部分回退等距）/
+  ///   snap（跟随起音，±12% 内吸附打击点；超出窗口部分回退等距）。
   /// 键与 [BeatMode] 名称对应，保证始终含 grid。
-  static Map<String, List<double>> _buildBeatMaps(List<double> onset, double bpm) {
+  static Map<String, List<double>> _buildBeatMaps(
+    List<double> onset,
+    double bpm, {
+    required double total,
+  }) {
     if (bpm <= 0) return <String, List<double>>{};
     final period = 60.0 / bpm;
-    final grid = _buildGrid(onset, bpm);
+    final grid = _buildGrid(onset, bpm, total: total);
     if (grid.isEmpty) return <String, List<double>>{'grid': grid};
 
-    // 以 grid 为基础，向局部起音峰吸附（在原周期内，light/snap 不越界）。
+    // 以 grid 为基础，向局部起音峰吸附（在原周期内，light/snap 不越界）；
+    // grid 已铺满整首歌，窗口外无起音峰时会自然回退到等距位置。
     final light = _followOnsets(onset, grid, period, 0.05);
     final snap = _followOnsets(onset, grid, period, 0.12);
     return <String, List<double>>{
