@@ -1,0 +1,48 @@
+name: run_bpm_android
+description: "RUN BPM — 基于 BPM 的本地跑步音乐播放器（安卓离线版）。直接选择一个文件夹，读取其中的音乐文件，识别 BPM、推荐、变速与节拍器连续播放。"
+publish_to: "none"
+# 测试版版本号：0.x.y+z（z 为内部构建号，每次迭代替换递增）。
+# 仍处测试期，功能未全部完善、存在已知 bug，故不用 1.x 正式版号。
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # 播放与变速（ExoPlayer 变速默认保持音高）
+  just_audio: ^0.9.36
+
+  # 文件夹选择（Android 上使用 SAF 目录选择器）
+  file_picker: ^8.0.3
+
+  # 扫描音乐文件：Android 11+（作用域存储）下 dart:io 无法枚举共享音乐目录，
+  # 通过 MediaStore 查询音频（需 READ_MEDIA_AUDIO / READ_EXTERNAL_STORAGE）。
+  on_audio_query: ^2.9.0
+
+  # 解码音频为 PCM 用于本地 BPM 分析
+  ffmpeg_kit_flutter_audio: ^6.0.3
+
+  # 状态管理
+  provider: ^6.1.1
+  path_provider: ^2.1.2
+  path: ^1.9.0
+
+  # 记住上次选择的文件夹，再次启动应用不必重选/重解析
+  shared_preferences: ^2.2.3
+
+  # NCM（网易云加密格式）解析：AES-128-ECB 解密 key/元数据段
+  pointycastle: ^3.9.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+
+dependency_overrides:
+  # 固定依赖解析，避免 gradle 拉取冲突（可按需移除）
+  js: ^0.7.1

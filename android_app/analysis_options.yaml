@@ -1,0 +1,13 @@
+include: package:flutter_lints/flutter.yaml
+
+linter:
+  rules:
+    prefer_single_quotes: true
+    avoid_print: true
+
+analyzer:
+  errors:
+    unused_field: warning
+  exclude:
+    - build/**
+    - android/**
