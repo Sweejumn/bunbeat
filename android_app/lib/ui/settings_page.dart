@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../services/bpm_display_controller.dart';
 import '../services/theme_controller.dart';
@@ -109,6 +110,14 @@ class SettingsPage extends StatelessWidget {
                 ),
                 const Divider(height: 1),
                 ListTile(
+                  leading: const Icon(Icons.code),
+                  title: const Text('GitHub 项目'),
+                  subtitle: const Text('查看源码与更新记录'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _openRepo(context),
+                ),
+                const Divider(height: 1),
+                ListTile(
                   leading: const Icon(Icons.help_outline),
                   title: const Text('使用说明'),
                   subtitle: const Text('选择节奏、推荐标记与变速播放说明'),
@@ -133,6 +142,25 @@ class SettingsPage extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// 打开 GitHub 项目主页（系统浏览器）。
+  Future<void> _openRepo(BuildContext context) async {
+    final uri = Uri.parse('https://github.com/Sweejumn/muzrun');
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('无法打开浏览器，请稍后再试')),
+        );
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('无法打开链接：$uri')),
+        );
+      }
+    }
   }
 
   Widget _sectionHeader(ThemeData theme, String text) {

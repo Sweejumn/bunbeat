@@ -3,7 +3,7 @@ description: "RUN BPM — 基于 BPM 的本地跑步音乐播放器（安卓离�
 publish_to: "none"
 # 测试版版本号：0.x.y+z（z 为内部构建号，每次迭代替换递增）。
 # 仍处测试期，功能未全部完善、存在已知 bug，故不用 1.x 正式版号。
-version: 0.1.0+32
+version: 0.1.0+33
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -40,6 +40,9 @@ dependencies:
 
   # 联网更新：从 GitHub Releases 检测新版本并下载 APK
   dio: ^5.4.0
+
+  # 打开系统浏览器访问 GitHub 项目页
+  url_launcher: ^6.3.0
 
 dev_dependencies:
   flutter_test:
