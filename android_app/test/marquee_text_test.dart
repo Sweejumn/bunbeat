@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:run_bpm_android/ui/marquee_text.dart';
 
 void main() {
-  testWidgets('MarqueeText 短文字可被找到，且不抛异常', (tester) async {
+  testWidgets('MarqueeText 短文字静止显示，可通过按文本找见', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(
         home: Scaffold(
@@ -12,12 +12,8 @@ void main() {
         ),
       ),
     );
-    // marquee 包内部可能以多份 Text 渲染（无缝滚动），这里只要求至少能找到该文本。
-    // 额外 pump 让 startAfter 定时器触发，避免测试结束时的 pending timer 断言。
-    await tester.pump(const Duration(milliseconds: 100));
-    expect(tester.takeException(), isNull);
-    expect(find.text('短歌名'), findsWidgets);
-    // 卸载组件树，触发 marquee 的 dispose 以取消内部定时器。
+    expect(find.text('短歌名'), findsOneWidget);
+    // 卸载组件树，释放 Ticker。
     await tester.pumpWidget(const SizedBox());
   });
 
@@ -34,12 +30,10 @@ void main() {
         ),
       ),
     );
-    // 不 pumpAndSettle：跑马灯在长文字下会无限循环。pump 让起始定时器触发后进入滚动。
-    await tester.pump(const Duration(milliseconds: 100));
-    expect(tester.takeException(), isNull);
-    expect(find.textContaining('这是一首'), findsWidgets);
-    // 卸载组件树，触发 marquee 的 dispose 以取消内部定时器。
+    await tester.pump(); // 不 pumpAndSettle：跑马灯在长文字下会无限滚动。
+    // 无缝跑马灯渲染两份文字（首段 + 紧随其后的第二段），静态下两份都在。
+    expect(find.text(long), findsWidgets);
+    // 卸载组件树，释放 Ticker。
     await tester.pumpWidget(const SizedBox());
-    await tester.pump(const Duration(milliseconds: 100));
   });
 }
