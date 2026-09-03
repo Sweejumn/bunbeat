@@ -1,5 +1,5 @@
-/// 拍点标尺（对应 Web 版 BeatRuler）：绿线 = 每个拍点，横向流过中心线；
-/// 中心线正对的绿线就是「现在这一拍」。暂停即静止。
+/// 拍点标尺（对应 Web 版 BeatRuler）：主题色线 = 每个拍点，横向流过中心线；
+/// 中心线正对的主题色线就是「现在这一拍」。暂停即静止。
 ///
 /// 只渲染可见窗口内的拍点（now ±4 秒），每帧按位置重算，快照帧数有界，
 /// 因此歌曲再长也不会因为标的数量而卡顿（Web 用 CSS transform 逐帧同思路）。
@@ -47,6 +47,7 @@ class _BeatRulerState extends State<BeatRuler>
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
+        final beatColor = Theme.of(context).colorScheme.primary;
         return AnimatedBuilder(
           animation: _ticker,
           builder: (context, _) {
@@ -66,7 +67,7 @@ class _BeatRulerState extends State<BeatRuler>
                 left: left - 1,
                 top: 4,
                 bottom: 4,
-                child: Container(width: 2, color: Colors.greenAccent),
+                child: Container(width: 2, color: beatColor),
               ));
             }
 
