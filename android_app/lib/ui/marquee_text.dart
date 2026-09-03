@@ -71,12 +71,13 @@ class _MarqueeTextState extends State<MarqueeText>
         // ClipRect 负责裁剪；这是用于无缝跑马灯、故意允许溢出的标准做法，
         // 不会触发 RenderFlex 溢出报错，滚动永不停顿。
         _cycle = textWidth + _kGap;
-        final offset = -(_anim.value * _cycle);
 
         return ClipRect(
           child: AnimatedBuilder(
             animation: _anim,
             builder: (context, _) {
+              // 每帧从 _anim.value 重新计算位移，确保真正持续滚动。
+              final offset = -(_anim.value * _cycle);
               return Transform.translate(
                 offset: Offset(offset, 0),
                 child: OverflowBox(
