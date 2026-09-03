@@ -95,20 +95,18 @@ class _RecommendPageState extends State<RecommendPage> {
                     },
                     child: const Text('自动勾选可变速'),
                   ),
+                  // 与曲库页对齐：全部勾选时变为「清空」，点一下全清；否则「全选」点一下全勾。
                   TextButton(
-                    onPressed: () {
-                      setState(() {
+                    onPressed: () => setState(() {
+                      if (_selected.length == recs.length) {
                         _selected.clear();
-                        for (final r in recs) {
-                          _selected.add(r.song.id);
-                        }
-                      });
-                    },
-                    child: const Text('全选'),
-                  ),
-                  TextButton(
-                    onPressed: () => setState(() => _selected.clear()),
-                    child: const Text('全不选'),
+                      } else {
+                        _selected
+                          ..clear()
+                          ..addAll(recs.map((r) => r.song.id));
+                      }
+                    }),
+                    child: Text(_selected.length == recs.length ? '清空' : '全选'),
                   ),
                 ],
               ),
