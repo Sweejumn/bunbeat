@@ -73,64 +73,60 @@ class _RecommendPageState extends State<RecommendPage> {
             ),
       body: Column(
         children: [
-          // 固定头部：运动模式 + 选择按钮。翻动歌曲列表时保持可见，方便反复点选。
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Column(
-              children: [
-                // 运动模式选择（与 Web 版 ModePicker 对齐：彩色滑块 + 快捷芯片 + 手动输入）。
-                ModePicker(
-                  bpm: lib.targetBpm,
-                  onChanged: (v) {
-                    setState(() {
-                      lib.targetBpm = v;
-                    });
-                  },
-                ),
-                const SizedBox(height: 12),
-                if (eligible > 0)
-                  Row(
-                    children: [
-                      Text('选择', style: Theme.of(context).textTheme.bodyMedium),
-                      const Spacer(),
-                      TextButton(
-                        onPressed: () {
-                          setState(() {
-                            _selected.clear();
-                            for (final r in recs) {
-                              if (_processable(r, lib.targetBpm)) {
-                                _selected.add(r.song.id);
-                              }
-                            }
-                          });
-                        },
-                        child: const Text('自动勾选可变速'),
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          setState(() {
-                            _selected.clear();
-                            for (final r in recs) {
-                              _selected.add(r.song.id);
-                            }
-                          });
-                        },
-                        child: const Text('全选'),
-                      ),
-                      TextButton(
-                        onPressed: () => setState(() => _selected.clear()),
-                        child: const Text('全不选'),
-                      ),
-                    ],
+          // 固定头部：只有「选择 + 自动勾选/全选/全不选」按钮行。
+          // 翻动歌曲列表时保持可见，方便反复点选（运动模式选择不再固定，随列表滚动）。
+          if (eligible > 0) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Row(
+                children: [
+                  Text('选择', style: Theme.of(context).textTheme.bodyMedium),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: () {
+                      setState(() {
+                        _selected.clear();
+                        for (final r in recs) {
+                          if (_processable(r, lib.targetBpm)) {
+                            _selected.add(r.song.id);
+                          }
+                        }
+                      });
+                    },
+                    child: const Text('自动勾选可变速'),
                   ),
-              ],
+                  TextButton(
+                    onPressed: () {
+                      setState(() {
+                        _selected.clear();
+                        for (final r in recs) {
+                          _selected.add(r.song.id);
+                        }
+                      });
+                    },
+                    child: const Text('全选'),
+                  ),
+                  TextButton(
+                    onPressed: () => setState(() => _selected.clear()),
+                    child: const Text('全不选'),
+                  ),
+                ],
+              ),
             ),
-          ),
-          const Divider(height: 1),
+            const Divider(height: 1),
+          ],
           Expanded(
             child: ListView(
               padding: EdgeInsets.fromLTRB(16, 8, 16, _selected.isEmpty ? 16 : 96),
               children: [
+                // 运动模式选择：随列表一起滚动（不固定）。
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: ModePicker(
+                    bpm: lib.targetBpm,
+                    onChanged: (v) => setState(() => lib.targetBpm = v),
+                  ),
+                ),
                 ...recs.map((r) => _RecTile(
                       r: r,
                       targetBpm: target,
