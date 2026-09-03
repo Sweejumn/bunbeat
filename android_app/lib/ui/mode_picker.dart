@@ -142,33 +142,9 @@ class _ModePickerState extends State<ModePicker> {
             const Text('BPM', style: TextStyle(color: Colors.white54)),
           ],
         ),
-        const SizedBox(height: 8),
-        _buildSlider(),
-        const SizedBox(height: 2),
-        _buildZoneLabels(),
-        const SizedBox(height: 6),
-        // 当前模式横幅
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Text(
-            isCustom
-                ? '${activeDef.icon} ${activeDef.label} · 区间外自定义（手动输入）'
-                : '${activeDef.icon} ${activeDef.label} · ${activeDef.rangeLow}–${activeDef.rangeHigh} BPM',
-            style: const TextStyle(fontSize: 13),
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          '拖动滑块选区间 · 输入框可设任意 BPM',
-          style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.45)),
-        ),
-        const SizedBox(height: 6),
-        // Quick-jump 芯片：仅四个区间（自定义手动输入）。
+        const SizedBox(height: 10),
+        // Quick-jump 芯片（走路/慢跑/跑步/快跑）：放在滑块上方，便于单手快速选模式，
+        // 也让滑块相对页面居中以方便拖动。
         Row(
           children: kModes.where((m) => m.id != ModeId.custom).map((m) {
             final selected = mode == m.id;
@@ -204,10 +180,25 @@ class _ModePickerState extends State<ModePicker> {
             );
           }).toList(),
         ),
-        const SizedBox(height: 4),
-        Text(
-          '点击模式 = 跳到该区间；区间外（<100 或 >185）请在输入框手动输入',
-          style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.35)),
+        const SizedBox(height: 12),
+        _buildSlider(),
+        const SizedBox(height: 2),
+        _buildZoneLabels(),
+        const SizedBox(height: 6),
+        // 当前模式横幅
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(
+            isCustom
+                ? '${activeDef.icon} ${activeDef.label} · 区间外自定义（手动输入）'
+                : '${activeDef.icon} ${activeDef.label} · ${activeDef.rangeLow}–${activeDef.rangeHigh} BPM',
+            style: const TextStyle(fontSize: 13),
+          ),
         ),
       ],
     );

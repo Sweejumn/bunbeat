@@ -80,17 +80,6 @@ class _RecommendPageState extends State<RecommendPage> {
             },
           ),
           const SizedBox(height: 16),
-          Text('已识别 ${eligible} 首可用于变速的歌曲', style: Theme.of(context).textTheme.bodySmall),
-          const SizedBox(height: 4),
-          // 颜色/箭头图例（对齐 Web RecommendPanel）：差 <3% = · 3–5% ↑/↓ ·
-          // 5–8% ↑/↓ · 8–12% ↑/↓ · >12% ✕（不自动选，已自动勾选其余可变速）。
-          Text(
-            '图例：= 差<3% · ↑/↓ 3–8% · 🔴 8–12% · ✕ >12% 不适合变速（默认不选）',
-            style: TextStyle(
-              fontSize: 11,
-              color: Colors.white.withValues(alpha: 0.5),
-            ),
-          ),
           const SizedBox(height: 8),
           if (eligible > 0)
             Row(
