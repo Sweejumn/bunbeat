@@ -7,6 +7,7 @@ import '../models/song.dart';
 import '../services/audio_reader.dart';
 import '../services/library_service.dart';
 import '../services/bpm_display_controller.dart';
+import '../services/queue_service.dart';
 import 'archive_page.dart';
 import 'help_dialog.dart';
 import 'marquee_text.dart';
@@ -51,6 +52,9 @@ class _LibraryPageState extends State<LibraryPage> {
   _SortMode _sortMode = _SortMode.scan;
   final TextEditingController _searchCtrl = TextEditingController();
   bool _searching = false;
+
+  /// 单击选中的歌曲 id 集合（用主题色高亮），供「加入变速播放列表」批量处理。
+  final Set<String> _selected = {};
 
   @override
   void dispose() {
@@ -247,6 +251,10 @@ class _LibraryPageState extends State<LibraryPage> {
     }
     return _SongList(
       songs: _visibleSongs(lib),
+      selected: _selected,
+      onToggle: (id) => setState(() {
+        if (!_selected.remove(id)) _selected.add(id);
+      }),
       onLongPress: (song) => _showActions(context, lib, song),
     );
   }
@@ -306,6 +314,14 @@ class _LibraryPageState extends State<LibraryPage> {
             ),
             const Divider(height: 1),
             ListTile(
+              leading: const Icon(Icons.playlist_add),
+              title: const Text('加入变速播放列表'),
+              subtitle: Text(_selected.isEmpty
+                  ? '把这个音加入或移出变速播放列表'
+                  : '已选 ${_selected.length} 首：不在则加入，全在则移出'),
+              onTap: () => Navigator.pop(ctx, 'playlist'),
+            ),
+            ListTile(
               leading: const Icon(Icons.inventory_2_outlined),
               title: const Text('归档'),
               subtitle: const Text('从曲库与推荐中隐藏，可在归档页放回'),
@@ -344,6 +360,9 @@ class _LibraryPageState extends State<LibraryPage> {
 
     if (action == null || !mounted) return;
     switch (action) {
+      case 'playlist':
+        await _togglePlaylist(context, lib, song);
+        break;
       case 'archive':
         await lib.archive(song);
         if (mounted) {
@@ -365,6 +384,37 @@ class _LibraryPageState extends State<LibraryPage> {
         await _editBpm(context, lib, song);
         break;
     }
+  }
+
+  /// 「加入变速播放列表」：对当前选中集合切换与播放队列的关系。
+  /// 全部已在队列 → 全部移出；部分在 → 补入剩余；都不在 → 全部加入。
+  /// 若未选中任何歌，则只处理长按的这一首。
+  Future<void> _togglePlaylist(
+      BuildContext context, LibraryService lib, Song longPressed) async {
+    final List<Song> target;
+    if (_selected.isNotEmpty) {
+      target = lib.songs.where((s) => _selected.contains(s.id)).toList();
+    } else {
+      target = [longPressed];
+    }
+    final playlist = lib.buildPlaylist(target); // 只含已有 BPM 的歌曲
+    if (playlist.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('这些歌曲还没有 BPM，无法加入变速播放列表')),
+      );
+      return;
+    }
+    final queue = context.read<QueueService>();
+    final (added, removed) = queue.toggleAddRemove(playlist);
+    if (_selected.isNotEmpty) setState(_selected.clear);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(removed > 0
+            ? '已从变速播放列表移出 $removed 首'
+            : '已把 $added 首加入变速播放列表'),
+      ),
+    );
   }
 
   String _statusText(Song song) {
@@ -415,8 +465,15 @@ class _LibraryPageState extends State<LibraryPage> {
 
 class _SongList extends StatelessWidget {
   final List<Song> songs;
+  final Set<String> selected;
+  final ValueChanged<String> onToggle;
   final void Function(Song) onLongPress;
-  const _SongList({required this.songs, required this.onLongPress});
+  const _SongList({
+    required this.songs,
+    required this.selected,
+    required this.onToggle,
+    required this.onLongPress,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -427,7 +484,12 @@ class _SongList extends StatelessWidget {
       itemCount: songs.length,
       itemBuilder: (context, i) {
         final s = songs[i];
-        return _SongTile(song: s, onLongPress: () => onLongPress(s));
+        return _SongTile(
+          song: s,
+          selected: selected.contains(s.id),
+          onToggle: () => onToggle(s.id),
+          onLongPress: () => onLongPress(s),
+        );
       },
     );
   }
@@ -435,8 +497,15 @@ class _SongList extends StatelessWidget {
 
 class _SongTile extends StatelessWidget {
   final Song song;
+  final bool selected;
+  final VoidCallback onToggle;
   final VoidCallback onLongPress;
-  const _SongTile({required this.song, required this.onLongPress});
+  const _SongTile({
+    required this.song,
+    required this.selected,
+    required this.onToggle,
+    required this.onLongPress,
+  });
 
   String _statusText(BuildContext outer) {
     switch (song.bpmStatus) {
@@ -463,8 +532,11 @@ class _SongTile extends StatelessWidget {
       _ => dark ? Colors.orangeAccent : Colors.orange.shade800,
     };
     return ListTile(
-      // 长按弹出操作菜单（归档 / 重新检测 / BPM 修改）。
+      // 单击选中（主题色高亮，可多选）；长按弹出操作菜单。
+      onTap: onToggle,
       onLongPress: onLongPress,
+      selected: selected,
+      selectedTileColor: theme.colorScheme.primary.withValues(alpha: 0.15),
       leading: ClipRRect(
         borderRadius: BorderRadius.circular(4),
         child: SizedBox(

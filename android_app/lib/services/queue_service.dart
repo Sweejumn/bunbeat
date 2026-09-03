@@ -279,6 +279,57 @@ class QueueService extends ChangeNotifier {
     return pick;
   }
 
+  /// 把一组待变速歌曲与当前队列做「切换」：
+  /// - 全部已在队列 → 全部从队列移出；
+  /// - 部分在队列   → 只补入还没在队列的那部分；
+  /// - 都不在队列   → 全部加入队列。
+  /// 返回 `(added, removed)` 数量，供界面向用户提示结果。
+  (int, int) toggleAddRemove(Iterable<PlaylistItem> candidates) {
+    final list = candidates.toList();
+    if (list.isEmpty) return (0, 0);
+    final presentPaths = _items.map((e) => e.filePath).toSet();
+    var allPresent = true;
+    final toAdd = <PlaylistItem>[];
+    for (final c in list) {
+      if (presentPaths.contains(c.filePath)) {
+        // 已在队列，跳过。
+      } else {
+        allPresent = false;
+        toAdd.add(c);
+      }
+    }
+
+    if (allPresent) {
+      // 全部已在队列 → 全部移出。
+      final removePaths = list.map((e) => e.filePath).toSet();
+      final currentPath = (_index >= 0 && _index < _items.length)
+          ? _items[_index].filePath
+          : null;
+      _items.removeWhere((it) => removePaths.contains(it.filePath));
+      if (_items.isEmpty) {
+        _index = -1;
+        _playing = false;
+      } else if (currentPath != null) {
+        // 尽量让当前曲保持原样：仍能找到就指向它，否则落到队首。
+        final i = _items.indexWhere((it) => it.filePath == currentPath);
+        _index = i < 0 ? 0 : i;
+      } else {
+        _index = _index.clamp(0, _items.length - 1);
+      }
+      _shuffleHistory.clear();
+      _persist();
+      notifyListeners();
+      return (0, removePaths.length);
+    }
+
+    // 部分或都不在 → 把缺失的补齐加入队列末尾。
+    _items.addAll(toAdd);
+    _shuffleHistory.clear();
+    _persist();
+    notifyListeners();
+    return (toAdd.length, 0);
+  }
+
   void clear() {
     _items = [];
     _index = -1;
