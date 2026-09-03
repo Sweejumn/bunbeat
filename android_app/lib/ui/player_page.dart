@@ -481,30 +481,18 @@ class _PlayerPageState extends State<PlayerPage> {
     }
   }
 
-  /// 左下角「播放模式」按钮：图标 + 文字，点按循环切换，方便直接看到当前模式。
+  /// 左下角「播放模式」按钮：图标点按循环切换（不带文字，只显示图标）。
   Widget _buildModeButton(QueueService q) {
     final colorScheme = Theme.of(context).colorScheme;
     final (icon, label) = _playModeInfo(q);
     final active = q.shuffle || q.repeatingOne;
     return Tooltip(
       message: '播放模式（点按切换）：$label',
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: () => _cyclePlayMode(q),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon,
-                  size: 22, color: active ? colorScheme.primary : null),
-              Text(label,
-                  style: TextStyle(
-                      fontSize: 9,
-                      color: active ? colorScheme.primary : null)),
-            ],
-          ),
-        ),
+      child: IconButton(
+        iconSize: 26,
+        tooltip: '播放模式（点按切换）：$label',
+        icon: Icon(icon, color: active ? colorScheme.primary : null),
+        onPressed: () => _cyclePlayMode(q),
       ),
     );
   }
@@ -1009,21 +997,21 @@ class _PlaylistSheetState extends State<_PlaylistSheet> {
                       itemBuilder: (context, index) {
                         final item = items[index];
                         final isCurrent = index == q.index;
-                        return ReorderableDragStartListener(
+                        return _PlaylistTile(
                           key: ValueKey('item-$index'),
+                          item: item,
+                          isCurrent: isCurrent,
+                          // 列表项在长按任意处时对拖动排序不敏感，仅手柄区域可拖动，
+                          // 从而保留列表的上下滚动体验。
                           index: index,
-                          child: _PlaylistTile(
-                            item: item,
-                            isCurrent: isCurrent,
-                            artworkPath: _artworkFor(lib, item.filePath),
-                            onTap: isCurrent
-                                ? null
-                                : () {
-                                    widget.onPlayIndex(index);
-                                    Navigator.of(context).pop();
-                                  },
-                            onDelete: () => q.removeAt(index),
-                          ),
+                          artworkPath: _artworkFor(lib, item.filePath),
+                          onTap: isCurrent
+                              ? null
+                              : () {
+                                  widget.onPlayIndex(index);
+                                  Navigator.of(context).pop();
+                                },
+                          onDelete: () => q.removeAt(index),
                         );
                       },
                     ),
@@ -1044,15 +1032,19 @@ class _PlaylistSheetState extends State<_PlaylistSheet> {
 }
 
 /// 播放列表单行：封面 + 标题 + 原/目标 BPM，当前播放高亮。
+/// 仅右边的拖动手柄区域可长按拖动排序（不干扰整行滑动浏览）。
 class _PlaylistTile extends StatelessWidget {
   final PlaylistItem item;
   final bool isCurrent;
+  final int index;
   final String? artworkPath;
   final VoidCallback? onTap;
   final VoidCallback onDelete;
   const _PlaylistTile({
+    super.key,
     required this.item,
     required this.isCurrent,
+    required this.index,
     required this.artworkPath,
     required this.onTap,
     required this.onDelete,
@@ -1099,8 +1091,15 @@ class _PlaylistTile extends StatelessWidget {
               child: Icon(Icons.graphic_eq,
                   size: 20, color: colorScheme.primary),
             ),
-          // 拖动排序手柄（长按整行或此图标即可拖动）。
-          Icon(Icons.drag_handle, color: colorScheme.onSurfaceVariant),
+          // 拖动手柄：只有按住这一小块区域才能长按拖动排序。
+          ReorderableDragStartListener(
+            index: index,
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 2),
+              child: Icon(Icons.drag_handle,
+                  size: 22, color: Colors.grey),
+            ),
+          ),
           IconButton(
             tooltip: '从播放列表移除',
             icon: const Icon(Icons.close, size: 20),
