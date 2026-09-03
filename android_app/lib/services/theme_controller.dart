@@ -5,7 +5,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// 预设主题色（名字 + 种子色值）。默认薄荷绿（与 Web 一致）。
+/// 预设主题色（名字 + 种子色值）。默认天蓝（Bunbeat 品牌色）。
 class ThemeColorOption {
   final String name;
   final Color color;
@@ -13,10 +13,10 @@ class ThemeColorOption {
 }
 
 const List<ThemeColorOption> kThemeColors = [
+  ThemeColorOption('天蓝', Color(0xFF38BDF8)),
   ThemeColorOption('薄荷绿', Color(0xFF34D399)),
   ThemeColorOption('活力橙', Color(0xFFF97316)),
   ThemeColorOption('热情红', Color(0xFFEF4444)),
-  ThemeColorOption('天蓝', Color(0xFF38BDF8)),
   ThemeColorOption('靛蓝', Color(0xFF6366F1)),
   ThemeColorOption('紫罗兰', Color(0xFF8B5CF6)),
   ThemeColorOption('樱花粉', Color(0xFFEC4899)),

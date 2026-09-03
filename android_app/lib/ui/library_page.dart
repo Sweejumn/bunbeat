@@ -467,10 +467,12 @@ class _SongTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // 浅色模式用偏深的颜色保证在白底上可读；深色模式用高亮色。
+    final dark = theme.brightness == Brightness.dark;
     final color = switch (song.bpmStatus) {
-      BpmStatus.done => Colors.greenAccent,
-      BpmStatus.failed => Colors.redAccent,
-      _ => Colors.orangeAccent,
+      BpmStatus.done => dark ? Colors.greenAccent : Colors.green.shade700,
+      BpmStatus.failed => dark ? Colors.redAccent : Colors.red.shade700,
+      _ => dark ? Colors.orangeAccent : Colors.orange.shade800,
     };
     return ListTile(
       // 单击选中；长按弹出操作菜单。

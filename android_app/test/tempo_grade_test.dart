@@ -10,39 +10,39 @@ void main() {
       expect(g.symbol, '—');
     });
 
-    test('差 <3% → 绿 =', () {
+    test('差 <3% → 绿 =（浅色用深绿）', () {
       final g = gradeTempo(156, 155); // 差 0.64%
       expect(g.symbol, '=');
-      expect(g.color, Colors.greenAccent);
+      expect(g.color, Colors.green.shade800);
     });
 
     test('差 3–5% → 绿 ↑/↓（高于目标需放慢 ↓）', () {
       final g = gradeTempo(160, 155); // 差 3.1%
       expect(g.symbol, '↓');
-      expect(g.color, Colors.greenAccent);
+      expect(g.color, Colors.green.shade800);
     });
 
     test('差 3–5% → 绿 ↑（低于目标需加快 ↑）', () {
       final g = gradeTempo(150, 155); // 差 3.3%
       expect(g.symbol, '↑');
-      expect(g.color, Colors.greenAccent);
+      expect(g.color, Colors.green.shade800);
     });
 
     test('差 5–8% → 琥珀 ↑/↓', () {
       final g = gradeTempo(166, 155); // 差 6.6%
-      expect(g.color, Colors.amber);
+      expect(g.color, Colors.amber.shade800);
       expect(g.symbol, '↓');
     });
 
     test('差 8–12% → 红 ↑/↓（勉强可变速）', () {
       final g = gradeTempo(170, 155); // 差 8.8%
-      expect(g.color, Colors.redAccent);
+      expect(g.color, Colors.red.shade800);
       expect(g.symbol, '↓');
     });
 
     test('差 >12% → 红 ✕（不可变速）', () {
       final g = gradeTempo(180, 155); // 差 13.9%
-      expect(g.color, Colors.redAccent);
+      expect(g.color, Colors.red.shade800);
       expect(g.symbol, '✕');
     });
 
@@ -55,6 +55,17 @@ void main() {
       final g = gradeTempo(155, 155);
       expect(g.symbol, '=');
       expect(g.pctLabel, '0%');
+    });
+  });
+
+  group('gradeTempo 深色模式用高亮色', () {
+    test('深色 → 绿/琥珀/红用高亮色', () {
+      expect(gradeTempo(156, 155, brightness: Brightness.dark).color,
+          Colors.greenAccent);
+      expect(gradeTempo(166, 155, brightness: Brightness.dark).color,
+          Colors.amber);
+      expect(gradeTempo(180, 155, brightness: Brightness.dark).color,
+          Colors.redAccent);
     });
   });
 }

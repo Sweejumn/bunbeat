@@ -189,8 +189,8 @@ class _RecTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = r.song;
     final orig = s.originalBpm;
-    final grade = gradeTempo(orig, targetBpm);
     final theme = Theme.of(context);
+    final grade = gradeTempo(orig, targetBpm, brightness: theme.brightness);
     return ListTile(
       onTap: onToggle,
       // 对齐 Web：选中行用主题色高亮，不再显示勾选框。

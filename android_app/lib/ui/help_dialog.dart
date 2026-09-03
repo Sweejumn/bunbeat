@@ -11,8 +11,10 @@ class HelpDialog {
       builder: (ctx) {
         TextStyle titleStyle() =>
             const TextStyle(fontWeight: FontWeight.bold, fontSize: 13);
-        TextStyle bodyStyle() =>
-            const TextStyle(fontSize: 13, color: Colors.white70);
+        TextStyle bodyStyle() => TextStyle(
+              fontSize: 13,
+              color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+            );
         Widget item(String title, String body) {
           return Padding(
             padding: const EdgeInsets.only(bottom: 10),

@@ -23,9 +23,26 @@ class TempoGrade {
 
 /// [orig] 为歌曲原 BPM，[target] 为目标 BPM。
 /// 方向：原 BPM 高于目标 → 需放慢 ↓；低于目标 → 需加快 ↑。
-TempoGrade gradeTempo(double? orig, double target) {
+/// [brightness] 让分级色随深浅色模式调整：浅色用深色可读色，深色用高亮色。
+TempoGrade gradeTempo(
+  double? orig,
+  double target, {
+  Brightness brightness = Brightness.light,
+}) {
+  // 浅色模式用偏深的颜色保证在白底上可读；深色模式用高亮色。
+  final none =
+      brightness == Brightness.dark ? Colors.grey : Colors.grey.shade600;
+  final green = brightness == Brightness.dark
+      ? Colors.greenAccent
+      : Colors.green.shade800;
+  final amber = brightness == Brightness.dark
+      ? Colors.amber
+      : Colors.amber.shade800;
+  final red =
+      brightness == Brightness.dark ? Colors.redAccent : Colors.red.shade800;
+
   if (orig == null || orig <= 0) {
-    return const TempoGrade(color: Colors.grey, symbol: '—', absPct: 0, pctLabel: '—');
+    return TempoGrade(color: none, symbol: '—', absPct: 0, pctLabel: '—');
   }
   final absPct = (orig - target).abs() / orig * 100;
   final signed = (orig - target) / orig * 100;
@@ -34,16 +51,16 @@ TempoGrade gradeTempo(double? orig, double target) {
       : '${signed > 0 ? '+' : ''}${signed.toStringAsFixed(1)}%';
   final arrow = orig > target ? '↓' : '↑';
   if (absPct <= 3) {
-    return TempoGrade(color: Colors.greenAccent, symbol: '=', absPct: absPct, pctLabel: pctLabel);
+    return TempoGrade(color: green, symbol: '=', absPct: absPct, pctLabel: pctLabel);
   }
   if (absPct <= 5) {
-    return TempoGrade(color: Colors.greenAccent, symbol: arrow, absPct: absPct, pctLabel: pctLabel);
+    return TempoGrade(color: green, symbol: arrow, absPct: absPct, pctLabel: pctLabel);
   }
   if (absPct <= 8) {
-    return TempoGrade(color: Colors.amber, symbol: arrow, absPct: absPct, pctLabel: pctLabel);
+    return TempoGrade(color: amber, symbol: arrow, absPct: absPct, pctLabel: pctLabel);
   }
   if (absPct <= 12) {
-    return TempoGrade(color: Colors.redAccent, symbol: arrow, absPct: absPct, pctLabel: pctLabel);
+    return TempoGrade(color: red, symbol: arrow, absPct: absPct, pctLabel: pctLabel);
   }
-  return TempoGrade(color: Colors.redAccent, symbol: '✕', absPct: absPct, pctLabel: pctLabel);
+  return TempoGrade(color: red, symbol: '✕', absPct: absPct, pctLabel: pctLabel);
 }

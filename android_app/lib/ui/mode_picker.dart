@@ -139,7 +139,9 @@ class _ModePickerState extends State<ModePicker> {
               ),
             ),
             const SizedBox(width: 6),
-            const Text('BPM', style: TextStyle(color: Colors.white54)),
+            Text('BPM',
+                style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
           ],
         ),
         const SizedBox(height: 10),
@@ -264,7 +266,9 @@ class _ModePickerState extends State<ModePicker> {
             child: Center(
               child: Text(
                 '${z.icon} ${z.from}–${z.to}',
-                style: const TextStyle(fontSize: 10, color: Colors.white54),
+                style: TextStyle(
+                    fontSize: 10,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant),
                 maxLines: 1,
               ),
             ),
