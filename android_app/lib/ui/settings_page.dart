@@ -50,6 +50,9 @@ class SettingsPage extends StatelessWidget {
                       ),
                     ],
                     selected: {themeCtrl.mode},
+                    // 不显示选中对勾图标，避免三个选项宽度变化导致布局被顶开；
+                    // 选中态仅靠背景填充色区分。
+                    showSelectedIcon: false,
                     onSelectionChanged: (s) =>
                         themeCtrl.setMode(s.first),
                   ),
