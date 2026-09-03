@@ -47,11 +47,46 @@ class _LibraryPageState extends State<LibraryPage> {
           ),
         ],
       ),
+      // 底部批量操作栏：多选后对全部选中歌曲统一 ×2 / ÷2 / 重新检测 / 手动修改。
+      bottomNavigationBar: _selected.isEmpty
+          ? null
+          : _BatchBar(
+              count: _selected.length,
+              onX2: () => _batchScale(lib, 2),
+              onDiv2: () => _batchScale(lib, 0.5),
+              onRetry: () => _batchRetry(lib),
+              onManual: () => _batchManual(lib),
+              onClear: () => setState(_selected.clear),
+            ),
       body: lib.folderPath == null
           ? _EmptyState(onPick: () => _pickFolder(context, lib))
           : Column(
               children: [
                 _FolderHeader(lib: lib, onPick: () => _pickFolder(context, lib)),
+                if (lib.songs.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Row(
+                      children: [
+                        Text('点击选歌，长按单首操作',
+                            style: Theme.of(context).textTheme.bodySmall),
+                        const Spacer(),
+                        TextButton(
+                          onPressed: () => setState(() {
+                            if (_selected.length == lib.songs.length) {
+                              _selected.clear();
+                            } else {
+                              _selected
+                                ..clear()
+                                ..addAll(lib.songs.map((s) => s.id));
+                            }
+                          }),
+                          child: Text(
+                              _selected.length == lib.songs.length ? '清空' : '全选'),
+                        ),
+                      ],
+                    ),
+                  ),
                 if (lib.isAnalyzing)
                   Padding(
                     padding: const EdgeInsets.all(8),
@@ -182,6 +217,150 @@ class _LibraryPageState extends State<LibraryPage> {
     if (value != null) {
       lib.setManualBpm(song, value);
     }
+  }
+
+  List<Song> _selectedSongs(LibraryService lib) =>
+      lib.songs.where((s) => _selected.contains(s.id)).toList();
+
+  void _batchScale(LibraryService lib, double factor) {
+    for (final s in _selectedSongs(lib)) {
+      final orig = s.originalBpm;
+      if (orig == null || orig <= 0) continue;
+      lib.setManualBpm(s, (orig * factor).clamp(20, 400));
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已对 ${_selected.length} 首歌曲 ${factor == 2 ? '×2' : '÷2'}')),
+    );
+  }
+
+  void _batchRetry(LibraryService lib) {
+    for (final s in _selectedSongs(lib)) {
+      lib.retryAnalyze(s);
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已重新检测 ${_selected.length} 首歌曲')),
+    );
+  }
+
+  Future<void> _batchManual(LibraryService lib) async {
+    if (_selectedSongs(lib).isEmpty) return;
+    final controller = TextEditingController();
+    final value = await showDialog<double>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('批量修改 BPM'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          decoration:
+              const InputDecoration(labelText: '统一设为 BPM (20–400)'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(
+            onPressed: () {
+              final v = double.tryParse(controller.text);
+              if (v != null && v >= 20 && v <= 400) Navigator.pop(ctx, v);
+            },
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+    if (value == null) return;
+    for (final s in _selectedSongs(lib)) {
+      lib.setManualBpm(s, value);
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已把 ${_selected.length} 首歌曲设为 $value BPM')),
+      );
+    }
+  }
+}
+
+class _BatchBar extends StatelessWidget {
+  final int count;
+  final VoidCallback onX2;
+  final VoidCallback onDiv2;
+  final VoidCallback onRetry;
+  final VoidCallback onManual;
+  final VoidCallback onClear;
+  const _BatchBar({
+    required this.count,
+    required this.onX2,
+    required this.onDiv2,
+    required this.onRetry,
+    required this.onManual,
+    required this.onClear,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Material(
+      color: colorScheme.surfaceContainerHighest,
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '已选 $count 首 · 对全部执行操作',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 4),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _BatchButton(
+                      icon: Icons.double_arrow, label: '×2', onPressed: onX2),
+                  _BatchButton(
+                      icon: Icons.horizontal_rule,
+                      label: '÷2',
+                      onPressed: onDiv2),
+                  _BatchButton(
+                      icon: Icons.refresh, label: '重测', onPressed: onRetry),
+                  _BatchButton(
+                      icon: Icons.edit, label: '改值', onPressed: onManual),
+                  _BatchButton(
+                      icon: Icons.deselect, label: '清空', onPressed: onClear),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BatchButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onPressed;
+  const _BatchButton({
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          onPressed: onPressed,
+          icon: Icon(icon),
+          color: colorScheme.primary,
+          tooltip: label,
+        ),
+        Text(label, style: Theme.of(context).textTheme.labelSmall),
+      ],
+    );
   }
 }
 
@@ -315,10 +494,7 @@ class _SongTile extends StatelessWidget {
       ),
       title: MarqueeText(song.title),
       subtitle: Text(_statusText(), style: TextStyle(color: color)),
-      trailing: selected
-          ? Icon(Icons.check_circle,
-              color: theme.colorScheme.primary, size: 22)
-          : const Icon(Icons.more_vert, size: 20, color: Colors.white38),
+      // 与推荐页对齐：不显示三点/勾选等 trailing 图标，仅用主题色高亮标记选中。
     );
   }
 }
