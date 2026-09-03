@@ -8,6 +8,7 @@ import 'services/metronome.dart';
 import 'services/queue_service.dart';
 import 'services/theme_controller.dart';
 import 'ui/home_page.dart';
+import 'ui/update_flow.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -92,6 +93,12 @@ class _StartupGateState extends State<_StartupGate> {
             // 把当前曲装载到播放器就绪但不播放，进播放页点播放即可出声。
             context.read<AudioPlayerService>().loadPaused(cur);
           }
+        });
+        // 联网更新自检：后台延迟几十秒再查，避免启动即刻弹窗打扰；
+        // 仅在发现新版本时弹「发现新版本」，否则静默（manual:false）。
+        Future.delayed(const Duration(seconds: 8), () {
+          if (!mounted) return;
+          UpdateFlow.checkAndPrompt(context, manual: false);
         });
       });
     }

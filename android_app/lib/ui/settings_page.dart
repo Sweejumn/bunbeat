@@ -5,6 +5,7 @@ import '../services/bpm_display_controller.dart';
 import '../services/theme_controller.dart';
 import 'about_page.dart';
 import 'help_dialog.dart';
+import 'update_flow.dart';
 
 /// 设置页：外观（主题）+ 使用说明/关于入口。
 /// 成熟 App 的基本设置骨架；可继续扩充更多条目。
@@ -99,6 +100,14 @@ class SettingsPage extends StatelessWidget {
             margin: const EdgeInsets.symmetric(horizontal: 12),
             child: Column(
               children: [
+                ListTile(
+                  leading: const Icon(Icons.system_update_alt),
+                  title: const Text('检查更新'),
+                  subtitle: const Text('从 GitHub Releases 检查并安装新版本'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => UpdateFlow.checkAndPrompt(context),
+                ),
+                const Divider(height: 1),
                 ListTile(
                   leading: const Icon(Icons.help_outline),
                   title: const Text('使用说明'),
