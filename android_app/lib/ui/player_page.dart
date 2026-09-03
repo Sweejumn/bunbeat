@@ -22,6 +22,7 @@ class PlayerPage extends StatefulWidget {
 
 class _PlayerPageState extends State<PlayerPage> {
   double _metVolume = 0.5;
+  double _musicVolume = 1.0;
   // 下列设置持久化到 SharedPreferences（对应 Web 的 localStorage）：
   //   runbpm.metronomeOn / runbpm.phaseNudge / runbpm.beatMode / runbpm.tapSound
   late BeatMode _activeBeatMode; // 缓存默认 grid；持久化
@@ -721,19 +722,42 @@ class _PlayerPageState extends State<PlayerPage> {
                 Text('${targetBpm.round()} BPM'),
               ],
             ),
+            // 音乐 + 拍子音量（对齐 Web：两个滑杆同一行各占一半）
             Row(
               children: [
-                const Icon(Icons.volume_down),
                 Expanded(
-                  child: Slider(
-                    value: _metVolume,
-                    onChanged: (v) {
-                      setState(() => _metVolume = v);
-                      met.setVolume(v);
-                    },
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('🔊 音乐',
+                          style: TextStyle(fontSize: 12)),
+                      Slider(
+                        value: _musicVolume,
+                        onChanged: (v) {
+                          setState(() => _musicVolume = v);
+                          player.setVolume(v);
+                        },
+                      ),
+                    ],
                   ),
                 ),
-                const Icon(Icons.volume_up),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('🥁 拍子',
+                          style: TextStyle(fontSize: 12)),
+                      Slider(
+                        value: _metVolume,
+                        onChanged: (v) {
+                          setState(() => _metVolume = v);
+                          met.setVolume(v);
+                        },
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
           ],
