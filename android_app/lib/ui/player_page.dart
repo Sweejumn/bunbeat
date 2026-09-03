@@ -726,6 +726,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     AudioPlayer player,
     double targetBpm,
   ) {
+    final bpm = _tapBpm;
+    final bpmText = context.read<BpmDisplayController>();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -733,81 +735,125 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           children: [
             const Text('打拍校准', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(width: 8),
-            const Text('按节拍点 8 下即可测出 BPM',
+            const Text('按节拍点 8 下测出 BPM',
                 style: TextStyle(color: Colors.grey, fontSize: 12)),
           ],
         ),
         const SizedBox(height: 8),
-        Row(
+        // 第一行：BPM 显示框 + 设首拍（变色按钮，无对勾）+ 应用 + 复位
+        // 全部常驻，不随打拍动态增删文字，对齐 Web 版 row1。
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            Expanded(
-              child: FilledButton.tonalIcon(
-                onPressed: () => _onTap(met, player, targetBpm),
-                icon: const Icon(Icons.touch_app),
-                label: Text(_tapBpm != null
-                    ? '测出 ${context.read<BpmDisplayController>().format(_tapBpm)} BPM · 再点 ${8 - _tapMediaSec.length} 下'
-                    : '点击 ${8 - _tapMediaSec.length} 下'),
+            // BPM 显示框：有结果显示数值，无则「自动」
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                border: Border.all(
+                  color: Theme.of(context).colorScheme.outline,
+                ),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                bpm != null ? '${bpmText.format(bpm)} BPM' : '自动',
+                style: TextStyle(
+                  color: bpm != null
+                      ? Theme.of(context).colorScheme.primary
+                      : Colors.grey,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
-            const SizedBox(width: 8),
-            Tooltip(
-              message:
-                  '开启后每次打拍都会把首拍（第一下）对齐到点击位置，适合首拍不在 0 秒的歌曲',
-              child: FilterChip(
-                label: const Text('设首拍'),
-                selected: _tapSetFirst,
-                onSelected: (v) => setState(() => _tapSetFirst = v),
-              ),
+            // 设首拍：开启变主题色（不再用 chip 对勾）
+            _toggleButton(
+              context,
+              label: '设首拍',
+              title: '开启后每次点按都会把首拍对齐到点击位置，适合首拍不在 0 秒的歌曲',
+              active: _tapSetFirst,
+              onTap: () => setState(() => _tapSetFirst = !_tapSetFirst),
             ),
-            const SizedBox(width: 8),
-            // 🔊 打拍音效开关（对应 Web，默认关、持久化）
-            FilterChip(
-              avatar: const Icon(Icons.volume_up, size: 16),
-              label: Text(_tapSoundOn ? '音效开' : '音效关'),
-              selected: _tapSoundOn,
-              onSelected: (v) {
-                setState(() => _tapSoundOn = v);
-                _savePref(_prefTapSound, v);
-              },
+            // 应用到节拍器（对应 Web 「设置」按钮，需先算出 BPM 才能点）
+            FilledButton(
+              onPressed: bpm == null
+                  ? null
+                  : () {
+                      met.setBpm(bpm);
+                      if (met.isEnabled) {
+                        met.setPhaseOffset(_phaseNudgeSeconds(bpm));
+                        met.reAnchor(player.position);
+                      }
+                      setState(() {});
+                    },
+              child: const Text('应用'),
+            ),
+            TextButton(
+              onPressed: () => setState(() {
+                _tapMediaSec.clear();
+                _tapMarks.clear();
+                _tapBpm = null;
+              }),
+              child: const Text('复位'),
             ),
           ],
         ),
-        if (_tapBpm != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Row(
-              children: [
-                Text(
-                  '测得节拍 ${context.read<BpmDisplayController>().format(_tapBpm)} BPM',
-                  style: const TextStyle(color: Colors.greenAccent),
-                ),
-                const Spacer(),
-                TextButton(
-                  onPressed: () {
-                    final t = _tapBpm ?? targetBpm;
-                    met.setBpm(t);
-                    if (met.isEnabled) {
-                      met.setPhaseOffset(_phaseNudgeSeconds(t));
-                      met.reAnchor(player.position);
-                    }
-                    setState(() {});
-                  },
-                  child: const Text('应用到节拍器'),
-                ),
-                TextButton(
-                  onPressed: () {
-                    setState(() {
-                      _tapMediaSec.clear();
-                      _tapMarks.clear();
-                      _tapBpm = null;
-                    });
-                  },
-                  child: const Text('重置'),
-                ),
-              ],
+        const SizedBox(height: 8),
+        // 第二行：左边音效开关，右边点按打拍按钮
+        Row(
+          children: [
+            _toggleButton(
+              context,
+              label: _tapSoundOn ? '音效 开' : '音效 关',
+              title: '点按打拍时是否播放滴答音效',
+              active: _tapSoundOn,
+              onTap: () {
+                setState(() => _tapSoundOn = !_tapSoundOn);
+                _savePref(_prefTapSound, _tapSoundOn);
+              },
+            ),
+            const Spacer(),
+            FilledButton.tonalIcon(
+              onPressed: () => _onTap(met, player, targetBpm),
+              icon: const Icon(Icons.touch_app),
+              label: const Text('点按打拍'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// 变色切换按钮：开启时整块变主题色（无对勾），对齐 Web 版 toggle 按钮。
+  Widget _toggleButton(
+    BuildContext context, {
+    required String label,
+    required bool active,
+    required VoidCallback onTap,
+    String? title,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: title ?? label,
+      child: Material(
+        color: active ? scheme.primary : scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: active ? scheme.onPrimary : scheme.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
-      ],
+        ),
+      ),
     );
   }
 
