@@ -29,7 +29,6 @@ class _PlayerPageState extends State<PlayerPage> {
   late bool _metEnabled; // 缓存默认 true（对齐 Web 默认开启）；持久化
   late bool _tapSoundOn; // 缓存默认 false；持久化（对齐 Web runbpm.tapSound 默认关）
   // 打拍校准：每次点击记录墙钟时间与媒体位置；>=8 次后取中位间隔算 BPM。
-  final List<double> _tapWallSec = [];
   final List<double> _tapMediaSec = [];
   final List<double> _tapMarks = []; // 最近 20 个打拍位置（媒体时间秒），供标尺 amber
   double? _tapBpm;
@@ -202,9 +201,6 @@ class _PlayerPageState extends State<PlayerPage> {
     return [for (final t in map) t + offset];
   }
 
-  /// 当前歌曲的相位可靠性（0..1，null=未评估）。
-  double? _currentReliability(Song? song) => song?.phaseReliability;
-
   @override
   Widget build(BuildContext context) {
     final queue = context.watch<QueueService>();
@@ -237,10 +233,6 @@ class _PlayerPageState extends State<PlayerPage> {
         break;
       }
     }
-
-    // 相位可靠性过低 → 提示手动校准。
-    final rel = _currentReliability(song);
-    final lowReliability = rel != null && rel < 0.6;
 
     final beatList = _currentBeatList(song, current.targetBpm);
 
@@ -294,28 +286,6 @@ class _PlayerPageState extends State<PlayerPage> {
                 ),
               ),
             ),
-            if (lowReliability)
-              const Padding(
-                padding: EdgeInsets.only(top: 8),
-                child: Card(
-                  color: Color(0x33FF9800),
-                  child: Padding(
-                    padding: EdgeInsets.all(10),
-                    child: Row(
-                      children: [
-                        Icon(Icons.warning_amber, color: Colors.orangeAccent),
-                        SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            '相位检测可靠性偏低，自动拍点可能不稳。建议用下方「打拍校准」手动对齐。',
-                            style: TextStyle(fontSize: 13),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
             const SizedBox(height: 8),
             _buildBeatRuler(beatList, player, _tapMarks),
             const SizedBox(height: 8),
@@ -459,7 +429,6 @@ class _PlayerPageState extends State<PlayerPage> {
     var cur = q.current;
     if (cur == null) return;
     // 切歌时清空打拍校准与标尺标记（对应 Web 切换曲目时清空 tapMarks）。
-    _tapWallSec.clear();
     _tapMediaSec.clear();
     _tapMarks.clear();
     _tapBpm = null;
@@ -588,8 +557,8 @@ class _PlayerPageState extends State<PlayerPage> {
                 onPressed: () => _onTap(met, player, targetBpm),
                 icon: const Icon(Icons.touch_app),
                 label: Text(_tapBpm != null
-                    ? '测出 ${_tapBpm!.round()} BPM · 再点 ${8 - _tapWallSec.length} 下'
-                    : '点击 ${8 - _tapWallSec.length} 下'),
+                    ? '测出 ${_tapBpm!.round()} BPM · 再点 ${8 - _tapMediaSec.length} 下'
+                    : '点击 ${8 - _tapMediaSec.length} 下'),
               ),
             ),
             const SizedBox(width: 8),
@@ -615,7 +584,7 @@ class _PlayerPageState extends State<PlayerPage> {
             ),
           ],
         ),
-        if (_tapBpm != null && _tapWallSec.length >= 8)
+        if (_tapBpm != null && _tapMediaSec.length >= 8)
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: Row(
@@ -640,7 +609,6 @@ class _PlayerPageState extends State<PlayerPage> {
                 TextButton(
                   onPressed: () {
                     setState(() {
-                      _tapWallSec.clear();
                       _tapMediaSec.clear();
                       _tapMarks.clear();
                       _tapBpm = null;
@@ -661,7 +629,6 @@ class _PlayerPageState extends State<PlayerPage> {
       met.playTapClick();
     }
     final media = player.position.inMilliseconds / 1000.0;
-    _tapWallSec.add(DateTime.now().millisecondsSinceEpoch / 1000.0);
     _tapMediaSec.add(media);
     // 标尺上显示最近 20 个打拍标记（琥珀色）
     _tapMarks.add(media);
@@ -673,16 +640,19 @@ class _PlayerPageState extends State<PlayerPage> {
       met.setPhaseOffset(_phaseNudgeSeconds(targetBpm));
       met.reAnchor(player.position);
     }
-    if (_tapWallSec.length >= 8) {
-      // 中位间隔 → BPM
+    if (_tapMediaSec.length >= 8) {
+      // 对齐 Web 版 TapBpm：用播放媒体时间差（单调、不随系统调时回拨），
+      // 过滤过小（≤0.1s，双击/误触/seek 回退）间隔，取中位，
+      // 结果四舍五入为整数 BPM，杜绝负值/巨大等异常。
       final intervals = <double>[];
-      for (var i = 1; i < _tapWallSec.length; i++) {
-        intervals.add(_tapWallSec[i] - _tapWallSec[i - 1]);
+      for (var i = 1; i < _tapMediaSec.length; i++) {
+        final d = _tapMediaSec[i] - _tapMediaSec[i - 1];
+        if (d > 0.1) intervals.add(d);
       }
-      intervals.sort();
-      final median = intervals[intervals.length ~/ 2];
-      if (median > 0) {
-        _tapBpm = 60.0 / median;
+      if (intervals.length >= 2) {
+        intervals.sort();
+        final median = intervals[intervals.length ~/ 2];
+        _tapBpm = (60.0 / median).roundToDouble();
       }
     }
     setState(() {});
