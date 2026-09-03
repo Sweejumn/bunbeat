@@ -7,6 +7,7 @@ import '../models/song.dart';
 import '../services/audio_reader.dart';
 import '../services/library_service.dart';
 import '../services/bpm_display_controller.dart';
+import 'archive_page.dart';
 import 'marquee_text.dart';
 import 'settings_page.dart';
 
@@ -17,7 +18,7 @@ class _MusicSource {
   const _MusicSource(this.name, this.path);
 }
 
-/// 常见音源的默认下载目录（用户可再通过「选择音乐文件夹」手动选其它目录）。
+/// 常见音源的默认下载目录（可再通过「自定义文件夹」手动选其它目录）。
 const List<_MusicSource> _kSources = [
   _MusicSource('网易云音乐', '/storage/emulated/0/Download/netease/cloudmusic/Music'),
   _MusicSource('QQ音乐', '/storage/emulated/0/Music/qqmusic/song'),
@@ -33,6 +34,20 @@ String sourceNameForPath(String? path) {
   return '本地文件夹';
 }
 
+/// 曲库歌曲排序方式。
+enum _SortMode { scan, titleAZ, titleZA, bpmAsc, bpmDesc, duration }
+
+extension on _SortMode {
+  String get label => switch (this) {
+        _SortMode.scan => '默认顺序',
+        _SortMode.titleAZ => '标题 A→Z',
+        _SortMode.titleZA => '标题 Z→A',
+        _SortMode.bpmAsc => 'BPM 从低到高',
+        _SortMode.bpmDesc => 'BPM 从高到低',
+        _SortMode.duration => '时长从长到短',
+      };
+}
+
 class LibraryPage extends StatefulWidget {
   const LibraryPage({super.key});
 
@@ -41,17 +56,63 @@ class LibraryPage extends StatefulWidget {
 }
 
 class _LibraryPageState extends State<LibraryPage> {
-  /// 单击选中的歌曲 id 集合（用主题色高亮，类比安卓文件管理）。
-  final Set<String> _selected = {};
+  _SortMode _sortMode = _SortMode.scan;
+  final TextEditingController _searchCtrl = TextEditingController();
+  bool _searching = false;
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  /// 顶部「添加音乐」：弹底部面板，可选预设音源或自定义文件夹。
+  void _addMusic(BuildContext context, LibraryService lib) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ListTile(
+              leading: Icon(Icons.add),
+              title: Text('添加音乐'),
+              subtitle: Text('选择一个音源或文件夹，会自动扫描导入',
+                  style: TextStyle(fontSize: 12)),
+            ),
+            const Divider(height: 1),
+            for (final s in _kSources)
+              ListTile(
+                leading: const Icon(Icons.library_music),
+                title: Text(s.name),
+                subtitle: Text(s.path,
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickSource(context, lib, s.path);
+                },
+              ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.folder_open),
+              title: const Text('自定义文件夹'),
+              subtitle: const Text('自己挑选一个音乐文件夹'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickFolder(context, lib);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Future<void> _pickFolder(BuildContext context, LibraryService lib) async {
     final reader = AudioReader();
     final pick = await reader.pickFolder(withSubfolders: true);
     if (pick.cancelled) return;
-    if (context.mounted) {
-      _selected.clear();
-      await lib.loadFolder(pick);
-    }
+    if (context.mounted) await lib.loadFolder(pick);
   }
 
   /// 直接按预设音源路径扫描载入（不弹系统文件夹选择器）。
@@ -60,16 +121,26 @@ class _LibraryPageState extends State<LibraryPage> {
     final reader = AudioReader();
     final pick = await reader.scanFolder(path);
     if (!context.mounted) return;
-    _selected.clear();
     if (pick.audioFiles.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('未在该音源目录找到音乐，可能是路径不存在或还没有下载歌曲'),
-        ),
+        const SnackBar(
+            content: Text('未在该音源目录找到音乐，可能是路径不存在或还没有下载歌曲')),
       );
       return;
     }
     await lib.loadFolder(pick);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已导入，正在分析 BPM…')),
+      );
+    }
+  }
+
+  void _openArchive(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ArchivePage()),
+    );
   }
 
   @override
@@ -80,6 +151,11 @@ class _LibraryPageState extends State<LibraryPage> {
         title: const Text('Bunbeat · 曲库'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.inventory_2_outlined),
+            tooltip: '归档',
+            onPressed: () => _openArchive(context),
+          ),
+          IconButton(
             icon: const Icon(Icons.settings_outlined),
             tooltip: '设置',
             onPressed: () => Navigator.push(
@@ -89,74 +165,142 @@ class _LibraryPageState extends State<LibraryPage> {
           ),
         ],
       ),
-      // 底部批量操作栏：多选后对全部选中歌曲统一 ×2 / ÷2 / 重新检测 / 手动修改。
-      bottomNavigationBar: _selected.isEmpty
-          ? null
-          : _BatchBar(
-              count: _selected.length,
-              onX2: () => _batchScale(lib, 2),
-              onDiv2: () => _batchScale(lib, 0.5),
-              onRetry: () => _batchRetry(lib),
-              onManual: () => _batchManual(lib),
-              onClear: () => setState(_selected.clear),
-            ),
-      body: lib.folderPath == null
-          ? _EmptyState(
-              onPick: () => _pickFolder(context, lib),
-              onSource: (path) => _pickSource(context, lib, path),
-            )
-          : Column(
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // 顶部操作条：添加音乐（常驻）+ 排序 + 搜索。
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+            child: Row(
               children: [
-                _FolderHeader(lib: lib, onPick: () => _pickFolder(context, lib)),
-                if (lib.songs.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Row(
-                      children: [
-                        Text('点击选歌，长按单首操作',
-                            style: Theme.of(context).textTheme.bodySmall),
-                        const Spacer(),
-                        TextButton(
-                          onPressed: () => setState(() {
-                            if (_selected.length == lib.songs.length) {
-                              _selected.clear();
-                            } else {
-                              _selected
-                                ..clear()
-                                ..addAll(lib.songs.map((s) => s.id));
-                            }
-                          }),
-                          child: Text(
-                              _selected.length == lib.songs.length ? '清空' : '全选'),
-                        ),
-                      ],
-                    ),
-                  ),
-                if (lib.isAnalyzing)
-                  Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: LinearProgressIndicator(
-                      value: lib.analyzingTotal == 0
-                          ? null
-                          : lib.analyzingDone / lib.analyzingTotal,
-                    ),
-                  ),
                 Expanded(
-                  child: _SongList(
-                    lib: lib,
-                    selected: _selected,
-                    onToggle: (id) => setState(() {
-                      if (!_selected.remove(id)) _selected.add(id);
-                    }),
-                    onLongPress: (song) => _showActions(context, lib, song),
+                  child: FilledButton.icon(
+                    onPressed: () => _addMusic(context, lib),
+                    icon: const Icon(Icons.add),
+                    label: const Text('添加音乐'),
                   ),
+                ),
+                const SizedBox(width: 4),
+                PopupMenuButton<_SortMode>(
+                  tooltip: '排序',
+                  initialValue: _sortMode,
+                  icon: const Icon(Icons.sort),
+                  onSelected: (v) => setState(() => _sortMode = v),
+                  itemBuilder: (_) => [
+                    for (final m in _SortMode.values)
+                      PopupMenuItem(value: m, child: Text(m.label)),
+                  ],
+                ),
+                IconButton(
+                  icon: Icon(_searching ? Icons.close : Icons.search),
+                  tooltip: _searching ? '关闭搜索' : '搜索',
+                  onPressed: () => setState(() {
+                    _searching = !_searching;
+                    if (!_searching) _searchCtrl.clear();
+                  }),
                 ),
               ],
             ),
+          ),
+          if (_searching)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+              child: TextField(
+                controller: _searchCtrl,
+                autofocus: true,
+                onChanged: (_) => setState(() {}),
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(Icons.search),
+                  hintText: '搜索歌名 / 歌手',
+                  isDense: true,
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ),
+          if (lib.isAnalyzing)
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: LinearProgressIndicator(
+                value: lib.analyzingTotal == 0
+                    ? null
+                    : lib.analyzingDone / lib.analyzingTotal,
+              ),
+            ),
+          Expanded(child: _buildBody(context, lib)),
+        ],
+      ),
     );
   }
 
-  /// 长按弹出操作菜单（重新检测 / 乘二 / 除以二 / 手动修改）。
+  Widget _buildBody(BuildContext context, LibraryService lib) {
+    if (lib.folderPath == null) {
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.music_note, size: 80, color: Colors.grey),
+            SizedBox(height: 16),
+            Text('还没有音乐\n点上方「添加音乐」选择音源导入'),
+            SizedBox(height: 16),
+            Text('无需上传，全程离线', style: TextStyle(fontSize: 12)),
+          ],
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _FolderHeader(lib: lib, onPick: () => _pickFolder(context, lib)),
+        Expanded(
+          child: _SongList(
+            songs: _visibleSongs(lib),
+            onLongPress: (song) => _showActions(context, lib, song),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 已排序 + 搜索过滤后的可见歌曲（已归档的不在 lib.songs 里，自然排除）。
+  List<Song> _visibleSongs(LibraryService lib) {
+    var list = lib.songs.toList();
+    final q = _searchCtrl.text.trim().toLowerCase();
+    if (q.isNotEmpty) {
+      list = list
+          .where((s) =>
+              s.title.toLowerCase().contains(q) ||
+              s.filename.toLowerCase().contains(q) ||
+              s.artist.toLowerCase().contains(q))
+          .toList();
+    }
+    switch (_sortMode) {
+      case _SortMode.scan:
+        break;
+      case _SortMode.titleAZ:
+        list.sort((a, b) =>
+            a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+        break;
+      case _SortMode.titleZA:
+        list.sort((a, b) =>
+            b.title.toLowerCase().compareTo(a.title.toLowerCase()));
+        break;
+      case _SortMode.bpmAsc:
+        list.sort((a, b) => (a.originalBpm ?? 0)
+            .compareTo(b.originalBpm ?? 0));
+        break;
+      case _SortMode.bpmDesc:
+        list.sort((a, b) => (b.originalBpm ?? 0)
+            .compareTo(a.originalBpm ?? 0));
+        break;
+      case _SortMode.duration:
+        list.sort((a, b) =>
+            (b.duration ?? 0).compareTo(a.duration ?? 0));
+        break;
+    }
+    return list;
+  }
+
+  /// 长按弹出操作菜单（归档 / 重新检测 / BPM 修改）。
   Future<void> _showActions(
       BuildContext context, LibraryService lib, Song song) async {
     final action = await showModalBottomSheet<String>(
@@ -171,6 +315,12 @@ class _LibraryPageState extends State<LibraryPage> {
               subtitle: Text(_statusText(song)),
             ),
             const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.inventory_2_outlined),
+              title: const Text('归档'),
+              subtitle: const Text('从曲库与推荐中隐藏，可在归档页放回'),
+              onTap: () => Navigator.pop(ctx, 'archive'),
+            ),
             ListTile(
               leading: const Icon(Icons.refresh),
               title: const Text('重新检测'),
@@ -204,6 +354,14 @@ class _LibraryPageState extends State<LibraryPage> {
 
     if (action == null || !mounted) return;
     switch (action) {
+      case 'archive':
+        await lib.archive(song);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('已归档，可在曲库右上角归档入口查看')),
+          );
+        }
+        break;
       case 'retry':
         lib.retryAnalyze(song);
         break;
@@ -263,199 +421,6 @@ class _LibraryPageState extends State<LibraryPage> {
       lib.setManualBpm(song, value);
     }
   }
-
-  List<Song> _selectedSongs(LibraryService lib) =>
-      lib.songs.where((s) => _selected.contains(s.id)).toList();
-
-  void _batchScale(LibraryService lib, double factor) {
-    for (final s in _selectedSongs(lib)) {
-      final orig = s.originalBpm;
-      if (orig == null || orig <= 0) continue;
-      lib.setManualBpm(s, (orig * factor).clamp(20, 400));
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已对 ${_selected.length} 首歌曲 ${factor == 2 ? '×2' : '÷2'}')),
-    );
-  }
-
-  void _batchRetry(LibraryService lib) {
-    for (final s in _selectedSongs(lib)) {
-      lib.retryAnalyze(s);
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已重新检测 ${_selected.length} 首歌曲')),
-    );
-  }
-
-  Future<void> _batchManual(LibraryService lib) async {
-    if (_selectedSongs(lib).isEmpty) return;
-    final controller = TextEditingController();
-    final value = await showDialog<double>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('批量修改 BPM'),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          decoration:
-              const InputDecoration(labelText: '统一设为 BPM (20–400)'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
-          FilledButton(
-            onPressed: () {
-              final v = double.tryParse(controller.text);
-              if (v != null && v >= 20 && v <= 400) Navigator.pop(ctx, v);
-            },
-            child: const Text('确定'),
-          ),
-        ],
-      ),
-    );
-    if (value == null) return;
-    for (final s in _selectedSongs(lib)) {
-      lib.setManualBpm(s, value);
-    }
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已把 ${_selected.length} 首歌曲设为 $value BPM')),
-      );
-    }
-  }
-}
-
-class _BatchBar extends StatelessWidget {
-  final int count;
-  final VoidCallback onX2;
-  final VoidCallback onDiv2;
-  final VoidCallback onRetry;
-  final VoidCallback onManual;
-  final VoidCallback onClear;
-  const _BatchBar({
-    required this.count,
-    required this.onX2,
-    required this.onDiv2,
-    required this.onRetry,
-    required this.onManual,
-    required this.onClear,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Material(
-      color: colorScheme.surfaceContainerHighest,
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                '已选 $count 首 · 对全部执行操作',
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-              const SizedBox(height: 4),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  _BatchButton(
-                      icon: Icons.double_arrow, label: '×2', onPressed: onX2),
-                  _BatchButton(
-                      icon: Icons.horizontal_rule,
-                      label: '÷2',
-                      onPressed: onDiv2),
-                  _BatchButton(
-                      icon: Icons.refresh, label: '重测', onPressed: onRetry),
-                  _BatchButton(
-                      icon: Icons.edit, label: '改值', onPressed: onManual),
-                  _BatchButton(
-                      icon: Icons.deselect, label: '清空', onPressed: onClear),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _BatchButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onPressed;
-  const _BatchButton({
-    required this.icon,
-    required this.label,
-    required this.onPressed,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IconButton(
-          onPressed: onPressed,
-          icon: Icon(icon),
-          color: colorScheme.primary,
-          tooltip: label,
-        ),
-        Text(label, style: Theme.of(context).textTheme.labelSmall),
-      ],
-    );
-  }
-}
-
-class _EmptyState extends StatelessWidget {
-  final VoidCallback onPick;
-  final ValueChanged<String> onSource;
-  const _EmptyState({required this.onPick, required this.onSource});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.music_note, size: 72, color: Colors.grey),
-            const SizedBox(height: 16),
-            const Text('选择音源直接读取其中的音乐\n无需上传，全程离线'),
-            const SizedBox(height: 20),
-            Text('常见音源', style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 4),
-            for (final s in _kSources) ...[
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: () => onSource(s.path),
-                  icon: const Icon(Icons.library_music),
-                  label: Text(s.name),
-                ),
-              ),
-            ],
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 20),
-              child: Divider(),
-            ),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: onPick,
-                icon: const Icon(Icons.folder_open),
-                label: const Text('选择其他音乐文件夹'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 class _FolderHeader extends StatelessWidget {
@@ -476,32 +441,20 @@ class _FolderHeader extends StatelessWidget {
 }
 
 class _SongList extends StatelessWidget {
-  final LibraryService lib;
-  final Set<String> selected;
-  final ValueChanged<String> onToggle;
+  final List<Song> songs;
   final void Function(Song) onLongPress;
-  const _SongList({
-    required this.lib,
-    required this.selected,
-    required this.onToggle,
-    required this.onLongPress,
-  });
+  const _SongList({required this.songs, required this.onLongPress});
 
   @override
   Widget build(BuildContext context) {
-    if (lib.songs.isEmpty) {
-      return const Center(child: Text('文件夹中没有音乐文件'));
+    if (songs.isEmpty) {
+      return const Center(child: Text('没有匹配的音乐'));
     }
     return ListView.builder(
-      itemCount: lib.songs.length,
+      itemCount: songs.length,
       itemBuilder: (context, i) {
-        final s = lib.songs[i];
-        return _SongTile(
-          song: s,
-          selected: selected.contains(s.id),
-          onToggle: () => onToggle(s.id),
-          onLongPress: () => onLongPress(s),
-        );
+        final s = songs[i];
+        return _SongTile(song: s, onLongPress: () => onLongPress(s));
       },
     );
   }
@@ -509,15 +462,8 @@ class _SongList extends StatelessWidget {
 
 class _SongTile extends StatelessWidget {
   final Song song;
-  final bool selected;
-  final VoidCallback onToggle;
   final VoidCallback onLongPress;
-  const _SongTile({
-    required this.song,
-    required this.selected,
-    required this.onToggle,
-    required this.onLongPress,
-  });
+  const _SongTile({required this.song, required this.onLongPress});
 
   String _statusText(BuildContext outer) {
     switch (song.bpmStatus) {
@@ -544,11 +490,8 @@ class _SongTile extends StatelessWidget {
       _ => dark ? Colors.orangeAccent : Colors.orange.shade800,
     };
     return ListTile(
-      // 单击选中；长按弹出操作菜单。
-      onTap: onToggle,
+      // 长按弹出操作菜单（归档 / 重新检测 / BPM 修改）。
       onLongPress: onLongPress,
-      selected: selected,
-      selectedTileColor: theme.colorScheme.primary.withValues(alpha: 0.15),
       leading: ClipRRect(
         borderRadius: BorderRadius.circular(4),
         child: SizedBox(
@@ -566,7 +509,6 @@ class _SongTile extends StatelessWidget {
       ),
       title: MarqueeText(song.title),
       subtitle: Text(_statusText(context), style: TextStyle(color: color)),
-      // 与推荐页对齐：不显示三点/勾选等 trailing 图标，仅用主题色高亮标记选中。
     );
   }
 }

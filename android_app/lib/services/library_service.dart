@@ -18,6 +18,11 @@ import 'ncm_service.dart';
 /// 曲库高可观察状态（变更事件驱动 UI）。
 class LibraryService extends ChangeNotifier {
   final List<Song> _songs = [];
+  final List<Song> _archived = [];
+
+  /// 归档歌曲的稳定 id 集合（= 源文件路径 hash，重启后稳定）。
+  /// 持久化到 SharedPreferences，保证归档状态跨启动保留。
+  final Set<String> _archivedIds = {};
   String? folderPath;
   int _analyzingTotal = 0;
   int _analyzingDone = 0;
@@ -25,6 +30,7 @@ class LibraryService extends ChangeNotifier {
   /// 缓存的歌曲 id（路径 hash），用于缓存文件名与播放列表键。
   static const _kLastFolder = 'last_folder';
   static const _kTargetBpm = 'target_bpm';
+  static const _kArchived = 'runbpm.archived';
 
   /// 当前选中的目标 BPM（推荐与入队用）。设置时持久化，退出后下次启动恢复。
   double _targetBpm = 155;
@@ -59,6 +65,12 @@ class LibraryService extends ChangeNotifier {
   List<Song> get songs => List.unmodifiable(_songs);
   bool get isAnalyzing => _analyzingTotal > 0 && _analyzingDone < _analyzingTotal;
 
+  /// 已归档歌曲（不出现在曲库、也不进推荐；可在归档页放回）。
+  List<Song> get archived => List.unmodifiable(_archived);
+
+  /// 该 id 是否处于归档状态。
+  bool isArchivedId(String id) => _archivedIds.contains(id);
+
   /// 替换曲库为给定文件夹中扫描到的音频文件。
   ///
   /// 已解析过且源文件未变化的歌曲直接走缓存秒开，不重新 ffmpeg+FFT；
@@ -67,6 +79,7 @@ class LibraryService extends ChangeNotifier {
     folderPath = pick.path;
     await _rememberFolder(pick.path);
     _songs.clear();
+    _archived.clear();
     final dir = await _tempDir();
     _analyzingTotal = pick.audioFiles.length;
     _analyzingDone = 0;
@@ -82,8 +95,9 @@ class LibraryService extends ChangeNotifier {
         artist: '未知',
         bpmStatus: BpmStatus.pending,
       );
+      final isArchived = _archivedIds.contains(id);
       await _prepareNcm(song);
-      _songs.add(song);
+      (isArchived ? _archived : _songs).add(song);
       notifyListeners();
       await _loadSong(song, dir);
     }
@@ -294,6 +308,45 @@ class LibraryService extends ChangeNotifier {
     final sub = Directory(p.join(dir.path, 'runbpm_analysis'));
     if (!await sub.exists()) await sub.create(recursive: true);
     return sub.path;
+  }
+
+  /// 播放前校验 [song] 是否仍处于归档状态（防止已归档歌曲被继续播放）。
+  bool isArchived(Song song) => _archivedIds.contains(song.id);
+
+  /// 归档一首歌：从曲库移入归档（推荐页自然不再出现），并持久化。
+  Future<void> archive(Song song) async {
+    _songs.remove(song);
+    _archived.add(song);
+    _archivedIds.add(song.id);
+    notifyListeners();
+    await _persistArchived();
+  }
+
+  /// 把一首归档歌曲放回曲库，并持久化。
+  Future<void> unarchive(Song song) async {
+    _archived.remove(song);
+    _songs.add(song);
+    _archivedIds.remove(song.id);
+    notifyListeners();
+    await _persistArchived();
+  }
+
+  Future<void> _persistArchived() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(_kArchived, _archivedIds.toList());
+    } catch (_) {}
+  }
+
+  /// 读取持久化的归档 id 集合（启动时调用，保持归档状态跨启动）。
+  Future<void> loadArchived() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList(_kArchived) ?? const [];
+      _archivedIds
+        ..clear()
+        ..addAll(list);
+    } catch (_) {}
   }
 
   /// 记住上次选择的文件夹（SharedPreferences），下次启动直接恢复。

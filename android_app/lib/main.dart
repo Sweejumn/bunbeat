@@ -81,8 +81,10 @@ class _StartupGateState extends State<_StartupGate> {
       // 等首帧画完再恢复，避免启动时白屏等待即时的缓存扫描。
       WidgetsBinding.instance.addPostFrameCallback((_) {
         // 先恢复上次的目标 BPM，再恢复文件夹等。
-        context.read<LibraryService>().loadTargetBpm();
-        context.read<LibraryService>().restoreLastFolder();
+        final lib = context.read<LibraryService>();
+        lib.loadTargetBpm();
+        // 先读归档 id，再恢复文件夹：让扫描时能正确区分归档/未归档歌曲。
+        lib.loadArchived().then((_) => lib.restoreLastFolder());
         context.read<ThemeController>().load();
         context.read<BpmDisplayController>().load();
         // 恢复上次的播放队列 + 当前曲 + 循环/随机模式（恢复到就绪不自动播放）。
