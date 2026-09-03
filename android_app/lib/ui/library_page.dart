@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -53,7 +54,7 @@ class _LibraryPageState extends State<LibraryPage> {
   final TextEditingController _searchCtrl = TextEditingController();
   bool _searching = false;
 
-  /// 单击选中的歌曲 id 集合（用主题色高亮），供「加入变速播放列表」批量处理。
+  /// 单击选中的歌曲 id 集合（用主题色高亮），供「加入播放列表」批量处理。
   final Set<String> _selected = {};
 
   @override
@@ -62,8 +63,19 @@ class _LibraryPageState extends State<LibraryPage> {
     super.dispose();
   }
 
-  /// 顶部「添加音乐」：弹底部面板，可选预设音源或自定义文件夹。
+  /// 顶部「添加音乐」：根据是否已选过文件夹决定行为。
+  /// - 没选过（尚未导入）：直接弹系统文件夹选择器，让用户尽快用起来；
+  /// - 已选过：弹出底部面板，可选预设音源或自定义文件夹（便于更换来源）。
   void _addMusic(BuildContext context, LibraryService lib) {
+    if (lib.folderPath == null) {
+      _pickFolder(context, lib);
+    } else {
+      _showSourceSheet(context, lib);
+    }
+  }
+
+  /// 「添加音乐」底部面板：可选预设音源或自定义文件夹。
+  void _showSourceSheet(BuildContext context, LibraryService lib) {
     showModalBottomSheet<void>(
       context: context,
       builder: (ctx) => SafeArea(
@@ -242,7 +254,7 @@ class _LibraryPageState extends State<LibraryPage> {
           children: [
             Icon(Icons.music_note, size: 80, color: Colors.grey),
             SizedBox(height: 16),
-            Text('还没有音乐\n点上方「添加音乐」选择音源导入'),
+            Text('还没有音乐\n点上方「添加音乐」选择一个文件夹导入'),
             SizedBox(height: 16),
             Text('无需上传，全程离线', style: TextStyle(fontSize: 12)),
           ],
@@ -298,9 +310,21 @@ class _LibraryPageState extends State<LibraryPage> {
     return list;
   }
 
-  /// 长按弹出操作菜单（归档 / 重新检测 / BPM 修改）。
+  /// 长按弹出操作菜单（加入播放列表 / 归档 / 重新检测 / BPM 修改）。
   Future<void> _showActions(
       BuildContext context, LibraryService lib, Song song) async {
+    // 判断当前选中（或长按这一首）是否已全部在播放列表里，据此显示「删除」还是「加入」。
+    final queue = context.read<QueueService>();
+    final targets = _selected.isNotEmpty
+        ? lib.songs.where((s) => _selected.contains(s.id)).toList()
+        : <Song>[song];
+    final targetPaths = {
+      for (final s in targets)
+        if (s.hasBpm) s.filePath,
+    };
+    final allInQueue = targetPaths.isNotEmpty &&
+        targetPaths.every(queue.items.map((e) => e.filePath).toSet().contains);
+
     final action = await showModalBottomSheet<String>(
       context: context,
       builder: (ctx) => SafeArea(
@@ -315,10 +339,10 @@ class _LibraryPageState extends State<LibraryPage> {
             const Divider(height: 1),
             ListTile(
               leading: const Icon(Icons.playlist_add),
-              title: const Text('加入变速播放列表'),
-              subtitle: Text(_selected.isEmpty
-                  ? '把这个音加入或移出变速播放列表'
-                  : '已选 ${_selected.length} 首：不在则加入，全在则移出'),
+              title: const Text('加入播放列表'),
+              subtitle: Text(allInQueue
+                  ? '全部已在播放列表中，点击从列表删除'
+                  : '点击加入播放列表'),
               onTap: () => Navigator.pop(ctx, 'playlist'),
             ),
             ListTile(
@@ -386,7 +410,7 @@ class _LibraryPageState extends State<LibraryPage> {
     }
   }
 
-  /// 「加入变速播放列表」：对当前选中集合切换与播放队列的关系。
+  /// 「加入播放列表」：对当前选中集合切换与播放队列的关系。
   /// 全部已在队列 → 全部移出；部分在 → 补入剩余；都不在 → 全部加入。
   /// 若未选中任何歌，则只处理长按的这一首。
   Future<void> _togglePlaylist(
@@ -400,7 +424,7 @@ class _LibraryPageState extends State<LibraryPage> {
     final playlist = lib.buildPlaylist(target); // 只含已有 BPM 的歌曲
     if (playlist.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('这些歌曲还没有 BPM，无法加入变速播放列表')),
+        const SnackBar(content: Text('这些歌曲还没有 BPM，无法加入播放列表')),
       );
       return;
     }
@@ -411,8 +435,8 @@ class _LibraryPageState extends State<LibraryPage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(removed > 0
-            ? '已从变速播放列表移出 $removed 首'
-            : '已把 $added 首加入变速播放列表'),
+            ? '已从播放列表移出 $removed 首'
+            : '已把 $added 首加入播放列表'),
       ),
     );
   }
@@ -500,6 +524,10 @@ class _SongTile extends StatelessWidget {
   final bool selected;
   final VoidCallback onToggle;
   final VoidCallback onLongPress;
+
+  /// 长按呼出菜单的触发时长：比系统默认（约 500ms）更短，方便快速呼出。
+  static const Duration _longPressDuration = Duration(milliseconds: 250);
+
   const _SongTile({
     required this.song,
     required this.selected,
@@ -531,29 +559,39 @@ class _SongTile extends StatelessWidget {
       BpmStatus.failed => dark ? Colors.redAccent : Colors.red.shade700,
       _ => dark ? Colors.orangeAccent : Colors.orange.shade800,
     };
-    return ListTile(
-      // 单击选中（主题色高亮，可多选）；长按弹出操作菜单。
-      onTap: onToggle,
-      onLongPress: onLongPress,
-      selected: selected,
-      selectedTileColor: theme.colorScheme.primary.withValues(alpha: 0.15),
-      leading: ClipRRect(
-        borderRadius: BorderRadius.circular(4),
-        child: SizedBox(
-          width: 48,
-          height: 48,
-          child: song.artworkPath != null
-              ? Image.file(
-                  File(song.artworkPath!),
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) =>
-                      const Icon(Icons.music_note, color: Colors.grey),
-                )
-              : const Icon(Icons.music_note, color: Colors.grey),
+    // 用自定义长按识别器以缩短长按时长（ListTile.onLongPress 用的是系统默认约 500ms）。
+    // 快速点击仍走 ListTile.onTap 选中；按住 _longPressDuration 不动则呼出菜单。
+    return RawGestureDetector(
+      gestures: {
+        LongPressGestureRecognizer:
+            GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
+          () => LongPressGestureRecognizer(
+              duration: _longPressDuration, supportedDevices: null),
+          (recognizer) => recognizer.onLongPress = onLongPress,
         ),
+      },
+      child: ListTile(
+        onTap: onToggle,
+        selected: selected,
+        selectedTileColor: theme.colorScheme.primary.withValues(alpha: 0.15),
+        leading: ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: SizedBox(
+            width: 48,
+            height: 48,
+            child: song.artworkPath != null
+                ? Image.file(
+                    File(song.artworkPath!),
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) =>
+                        const Icon(Icons.music_note, color: Colors.grey),
+                  )
+                : const Icon(Icons.music_note, color: Colors.grey),
+          ),
+        ),
+        title: MarqueeText(song.title),
+        subtitle: Text(_statusText(context), style: TextStyle(color: color)),
       ),
-      title: MarqueeText(song.title),
-      subtitle: Text(_statusText(context), style: TextStyle(color: color)),
     );
   }
 }
