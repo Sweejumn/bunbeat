@@ -72,12 +72,6 @@ class SettingsPage extends StatelessWidget {
                         ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '选择应用外观；「跟随系统」会随手机深浅色模式自动切换。',
-                    style: theme.textTheme.bodySmall
-                        ?.copyWith(color: theme.colorScheme.outline),
-                  ),
                 ],
               ),
             ),
