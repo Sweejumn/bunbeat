@@ -159,15 +159,15 @@ class _LibraryPageState extends State<LibraryPage> {
         title: const Text('Bunbeat · 曲库'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.inventory_2_outlined),
+            tooltip: '归档',
+            onPressed: () => _openArchive(context),
+          ),
+          IconButton(
             icon: const Icon(Icons.help_outline),
             tooltip: '使用说明',
             onPressed: () =>
                 HelpDialog.show(context, section: HelpSection.library),
-          ),
-          IconButton(
-            icon: const Icon(Icons.inventory_2_outlined),
-            tooltip: '归档',
-            onPressed: () => _openArchive(context),
           ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
@@ -324,6 +324,7 @@ class _LibraryPageState extends State<LibraryPage> {
     // 判断当前选中（或长按这一首）是否已全部在播放列表里，据此显示「删除」还是「加入」。
     final queue = context.read<QueueService>();
     final targets = _selected.isNotEmpty ? _selectedSongs(lib) : <Song>[song];
+    final isMulti = _selected.isNotEmpty;
     final targetPaths = {
       for (final s in targets)
         if (s.hasBpm) s.filePath,
@@ -339,11 +340,18 @@ class _LibraryPageState extends State<LibraryPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-            ListTile(
-              leading: const Icon(Icons.music_note),
-              title: MarqueeText(song.title),
-              subtitle: Text(_statusText(song)),
-            ),
+            if (isMulti)
+              ListTile(
+                leading: const Icon(Icons.playlist_remove),
+                title: Text('已选 ${targets.length} 首'),
+                subtitle: const Text('以下操作将同时作用于所选的歌曲'),
+              )
+            else
+              ListTile(
+                leading: const Icon(Icons.music_note),
+                title: MarqueeText(song.title),
+                subtitle: Text(_statusText(song)),
+              ),
             const Divider(height: 1),
             ListTile(
               leading: const Icon(Icons.playlist_add),
@@ -356,16 +364,20 @@ class _LibraryPageState extends State<LibraryPage> {
             ListTile(
               leading: const Icon(Icons.inventory_2_outlined),
               title: const Text('归档'),
-              subtitle: const Text('从曲库与推荐中隐藏，可在归档页放回'),
+              subtitle: Text(isMulti
+                  ? '把所选 ${targets.length} 首从曲库移除，可在归档页放回'
+                  : '从曲库与推荐中隐藏，可在归档页放回'),
               onTap: () => Navigator.pop(ctx, 'archive'),
             ),
             ListTile(
               leading: const Icon(Icons.refresh),
               title: const Text('重新检测'),
-              subtitle: const Text('重新分析这首歌曲的 BPM'),
+              subtitle: Text(isMulti
+                  ? '重新分析所选歌曲的 BPM'
+                  : '重新分析这首歌曲的 BPM'),
               onTap: () => Navigator.pop(ctx, 'retry'),
             ),
-            if (song.hasBpm) ...[
+            if (!isMulti && song.hasBpm) ...[
               ListTile(
                 leading: const Icon(Icons.double_arrow),
                 title: const Text('BPM ×2'),
@@ -391,18 +403,33 @@ class _LibraryPageState extends State<LibraryPage> {
         await _togglePlaylist(context, lib, song);
         break;
       case 'archive':
-        await lib.archive(song);
+        for (final s in targets) {
+          await lib.archive(s);
+        }
+        if (mounted && _selected.isNotEmpty) setState(_selected.clear);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('已归档，可在曲库右上角归档入口查看')),
+            SnackBar(
+              content: Text(targets.length == 1
+                  ? '已归档，可在曲库右上角归档入口查看'
+                  : '已归档 ${targets.length} 首，可在归档入口查看'),
+            ),
           );
         }
         break;
       case 'retry':
-        lib.retryAnalyze(song);
+        for (final s in targets) {
+          lib.retryAnalyze(s);
+        }
+        if (mounted && _selected.isNotEmpty) setState(_selected.clear);
         break;
       case 'x2':
-        lib.setManualBpm(song, ((song.originalBpm ?? 0) * 2).clamp(20, 400));
+        for (final s in targets) {
+          if (s.hasBpm) {
+            lib.setManualBpm(s, ((s.originalBpm ?? 0) * 2).clamp(20, 400));
+          }
+        }
+        if (mounted && _selected.isNotEmpty) setState(_selected.clear);
         break;
       case 'manual':
         await _editBpm(context, lib, song);
