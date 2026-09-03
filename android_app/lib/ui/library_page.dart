@@ -10,6 +10,29 @@ import '../services/bpm_display_controller.dart';
 import 'marquee_text.dart';
 import 'settings_page.dart';
 
+/// 一个预设音源：常见音乐 App 的下载目录。
+class _MusicSource {
+  final String name;
+  final String path;
+  const _MusicSource(this.name, this.path);
+}
+
+/// 常见音源的默认下载目录（用户可再通过「选择音乐文件夹」手动选其它目录）。
+const List<_MusicSource> _kSources = [
+  _MusicSource('网易云音乐', '/storage/emulated/0/Download/netease/cloudmusic/Music'),
+  _MusicSource('QQ音乐', '/storage/emulated/0/Music/qqmusic/song'),
+  _MusicSource('酷狗音乐', '/storage/emulated/0/Download/kgmusic/download'),
+];
+
+/// 把文件夹路径映射成一个简短、可读的来源名（不显示完整路径）。
+String sourceNameForPath(String? path) {
+  if (path == null || path.isEmpty) return '曲库';
+  for (final s in _kSources) {
+    if (path.toLowerCase() == s.path.toLowerCase()) return s.name;
+  }
+  return '本地文件夹';
+}
+
 class LibraryPage extends StatefulWidget {
   const LibraryPage({super.key});
 
@@ -29,6 +52,24 @@ class _LibraryPageState extends State<LibraryPage> {
       _selected.clear();
       await lib.loadFolder(pick);
     }
+  }
+
+  /// 直接按预设音源路径扫描载入（不弹系统文件夹选择器）。
+  Future<void> _pickSource(
+      BuildContext context, LibraryService lib, String path) async {
+    final reader = AudioReader();
+    final pick = await reader.scanFolder(path);
+    if (!context.mounted) return;
+    _selected.clear();
+    if (pick.audioFiles.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('未在该音源目录找到音乐，可能是路径不存在或还没有下载歌曲'),
+        ),
+      );
+      return;
+    }
+    await lib.loadFolder(pick);
   }
 
   @override
@@ -60,7 +101,10 @@ class _LibraryPageState extends State<LibraryPage> {
               onClear: () => setState(_selected.clear),
             ),
       body: lib.folderPath == null
-          ? _EmptyState(onPick: () => _pickFolder(context, lib))
+          ? _EmptyState(
+              onPick: () => _pickFolder(context, lib),
+              onSource: (path) => _pickSource(context, lib, path),
+            )
           : Column(
               children: [
                 _FolderHeader(lib: lib, onPick: () => _pickFolder(context, lib)),
@@ -367,24 +411,48 @@ class _BatchButton extends StatelessWidget {
 
 class _EmptyState extends StatelessWidget {
   final VoidCallback onPick;
-  const _EmptyState({required this.onPick});
+  final ValueChanged<String> onSource;
+  const _EmptyState({required this.onPick, required this.onSource});
 
   @override
   Widget build(BuildContext context) {
     return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.music_note, size: 80, color: Colors.grey),
-          const SizedBox(height: 16),
-          const Text('选择本地文件夹，直接读取其中的音乐\n无需上传，全程离线'),
-          const SizedBox(height: 16),
-          FilledButton.icon(
-            onPressed: onPick,
-            icon: const Icon(Icons.folder_open),
-            label: const Text('选择音乐文件夹'),
-          ),
-        ],
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.music_note, size: 72, color: Colors.grey),
+            const SizedBox(height: 16),
+            const Text('选择音源直接读取其中的音乐\n无需上传，全程离线'),
+            const SizedBox(height: 20),
+            Text('常见音源', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 4),
+            for (final s in _kSources) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () => onSource(s.path),
+                  icon: const Icon(Icons.library_music),
+                  label: Text(s.name),
+                ),
+              ),
+            ],
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+              child: Divider(),
+            ),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: onPick,
+                icon: const Icon(Icons.folder_open),
+                label: const Text('选择其他音乐文件夹'),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -399,7 +467,8 @@ class _FolderHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListTile(
       leading: const Icon(Icons.folder),
-      title: Text(lib.folderPath ?? ''),
+      // 不显示完整路径，只显示简短的可读来源名。
+      title: Text(sourceNameForPath(lib.folderPath)),
       subtitle: Text('${lib.songs.length} 首音乐'),
       trailing: TextButton(onPressed: onPick, child: const Text('更换')),
     );
