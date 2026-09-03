@@ -522,6 +522,27 @@ class _PlayerPageState extends State<PlayerPage> {
                 ),
                 const SizedBox(width: 8),
                 Text('${_phaseNudgePct.round()}%'),
+                const SizedBox(width: 4),
+                // 归零按钮（对齐 Web：始终显示，非零时才可点，为零时灰色禁用）。
+                IconButton(
+                  tooltip: '把偏差归零',
+                  onPressed: _phaseNudgePct == 0
+                      ? null
+                      : () {
+                          setState(() => _phaseNudgePct = 0);
+                          _savePref(_prefPhaseNudge, 0);
+                          if (met.isEnabled) {
+                            met.setPhaseOffset(_phaseNudgeSeconds(targetBpm));
+                            met.reAnchor(player.position);
+                          }
+                        },
+                  icon: Icon(
+                    Icons.replay,
+                    color: _phaseNudgePct == 0
+                        ? Theme.of(context).disabledColor
+                        : Theme.of(context).colorScheme.primary,
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 4),
