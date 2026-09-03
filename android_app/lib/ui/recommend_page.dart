@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../models/song.dart';
 import '../services/audio_player_service.dart';
+import '../services/bpm_display_controller.dart';
 import '../services/library_service.dart';
 import '../services/queue_service.dart';
 import 'help_dialog.dart';
@@ -227,14 +228,14 @@ class _RecTile extends StatelessWidget {
           Expanded(
             child: Row(
               children: [
-                // 对齐 Web：BPM 显示为「目标±Δ」（如 155+5），颜色按偏差分级。
+                // BPM 走设置开关（BpmDisplayController.format：默认两位小数，关=整数）。
                 Text(
-                  _bpmText(orig, targetBpm),
-                  style: TextStyle(color: grade.color, fontWeight: FontWeight.w600),
+                  context.read<BpmDisplayController>().format(orig),
+                  style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
                 ),
                 Text(' · ',
                     style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
-                // 对齐 Web：带符号百分比（如 +3.4%），颜色与箭头一致。
+                // 带符号百分比（如 +3.4%），颜色与箭头一致。
                 Flexible(
                   child: Text(
                     orig != null ? grade.pctLabel : '未知 BPM',
@@ -249,16 +250,6 @@ class _RecTile extends StatelessWidget {
       ),
       dense: true,
     );
-  }
-
-  /// Web 式 BPM 文本：目标±Δ，如 155+5 / 155-3 / 155（对齐 RecommendPanel.bpmText）。
-  String _bpmText(double? orig, double target) {
-    if (orig == null || orig <= 0) return '—';
-    final t = target.round();
-    final delta = (orig - target).round();
-    if (delta > 0) return '$t+$delta';
-    if (delta < 0) return '$t$delta';
-    return '$t';
   }
 }
 
