@@ -8,6 +8,7 @@ import '../models/song.dart';
 import '../services/audio_player_service.dart';
 import '../services/library_service.dart';
 import '../services/queue_service.dart';
+import 'tempo_grade.dart';
 
 class RecommendPage extends StatefulWidget {
   const RecommendPage({super.key});
@@ -19,6 +20,7 @@ class RecommendPage extends StatefulWidget {
 class _RecommendPageState extends State<RecommendPage> {
   ModeId _mode = ModeId.run;
   final Set<String> _selected = {};
+  double _lastAutoTarget = double.negativeInfinity;
 
   @override
   Widget build(BuildContext context) {
@@ -26,6 +28,22 @@ class _RecommendPageState extends State<RecommendPage> {
     final recs = lib.recommend(target: lib.targetBpm)
       ..sort((a, b) => a.distance.compareTo(b.distance));
     final eligible = recs.where((r) => r.song.hasBpm).length;
+    final target = lib.targetBpm;
+
+    // 对齐 Web：每次目标 BPM 变化（含首次载入）自动勾选所有可变速歌曲，
+    // 红色 ✕（>12%）的歌曲不自动选，仍保留用户手动选择。
+    if (_lastAutoTarget != target) {
+      _lastAutoTarget = target;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {
+          _selected.clear();
+          for (final r in lib.recommend(target: target)) {
+            if (_processable(r, target)) _selected.add(r.song.id);
+          }
+        });
+      });
+    }
 
     return Scaffold(
       appBar: AppBar(title: const Text('运动模式与推荐')),
@@ -100,6 +118,16 @@ class _RecommendPageState extends State<RecommendPage> {
           ),
           const SizedBox(height: 8),
           Text('已识别 ${eligible} 首可用于变速的歌曲', style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 4),
+          // 颜色/箭头图例（对齐 Web RecommendPanel）：差 <3% = · 3–5% ↑/↓ ·
+          // 5–8% ↑/↓ · 8–12% ↑/↓ · >12% ✕（不自动选，已自动勾选其余可变速）。
+          Text(
+            '图例：= 差<3% · ↑/↓ 3–8% · 🔴 8–12% · ✕ >12% 不适合变速（默认不选）',
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.white.withValues(alpha: 0.5),
+            ),
+          ),
           const SizedBox(height: 8),
           if (eligible > 0)
             Row(
@@ -139,6 +167,7 @@ class _RecommendPageState extends State<RecommendPage> {
           const SizedBox(height: 4),
           ...recs.map((r) => _RecTile(
                 r: r,
+                targetBpm: target,
                 selected: _selected.contains(r.song.id),
                 onToggle: () => setState(() {
                   if (!_selected.remove(r.song.id)) {
@@ -181,13 +210,21 @@ class _RecommendPageState extends State<RecommendPage> {
 
 class _RecTile extends StatelessWidget {
   final Recommendation r;
+  final double targetBpm;
   final bool selected;
   final VoidCallback onToggle;
-  const _RecTile({required this.r, required this.selected, required this.onToggle});
+  const _RecTile({
+    required this.r,
+    required this.targetBpm,
+    required this.selected,
+    required this.onToggle,
+  });
 
   @override
   Widget build(BuildContext context) {
     final s = r.song;
+    final orig = s.originalBpm;
+    final grade = gradeTempo(orig, targetBpm);
     return ListTile(
       onTap: onToggle,
       leading: ClipRRect(
@@ -212,11 +249,21 @@ class _RecTile extends StatelessWidget {
       ),
       subtitle: Row(
         children: [
-          _Stars(score: r.score),
+          // 分级箭头/符号（绿= · 绿/琥珀/红↑↓ · 红✕），颜色与 Web 图例一致。
+          Text(
+            grade.symbol,
+            style: TextStyle(
+              color: grade.color,
+              fontWeight: FontWeight.bold,
+              fontSize: 16,
+            ),
+          ),
           const SizedBox(width: 6),
           Expanded(
             child: Text(
-              '${s.originalBpm!.round()} BPM · 距离目标 ${r.distance.toStringAsFixed(1)}',
+              orig != null
+                  ? '${orig.round()} BPM · ${grade.pctLabel} · ${r.distance.toStringAsFixed(1)}'
+                  : '未知 BPM',
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -232,21 +279,3 @@ class _RecTile extends StatelessWidget {
   }
 }
 
-class _Stars extends StatelessWidget {
-  final int score;
-  const _Stars({required this.score});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: List.generate(5, (i) {
-        return Icon(
-          i < score ? Icons.star : Icons.star_border,
-          size: 16,
-          color: Colors.amber,
-        );
-      }),
-    );
-  }
-}

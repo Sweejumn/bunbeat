@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart' hide LoopMode;
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/song.dart';
 import '../services/audio_player_service.dart';
@@ -21,11 +22,16 @@ class PlayerPage extends StatefulWidget {
 
 class _PlayerPageState extends State<PlayerPage> {
   double _metVolume = 0.5;
-  BeatMode _activeBeatMode = BeatMode.grid;
-  double _phaseNudgePct = 0.0; // 偏差 ±%（半拍），-50..+50
+  // 下列设置持久化到 SharedPreferences（对应 Web 的 localStorage）：
+  //   runbpm.metronomeOn / runbpm.phaseNudge / runbpm.beatMode / runbpm.tapSound
+  late BeatMode _activeBeatMode; // 缓存默认 grid；持久化
+  late double _phaseNudgePct; // 缓存默认 0；持久化（-50..+50）
+  late bool _metEnabled; // 缓存默认 true（对齐 Web 默认开启）；持久化
+  late bool _tapSoundOn; // 缓存默认 false；持久化（对齐 Web runbpm.tapSound 默认关）
   // 打拍校准：每次点击记录墙钟时间与媒体位置；>=8 次后取中位间隔算 BPM。
   final List<double> _tapWallSec = [];
   final List<double> _tapMediaSec = [];
+  final List<double> _tapMarks = []; // 最近 20 个打拍位置（媒体时间秒），供标尺 amber
   double? _tapBpm;
   bool _tapSetFirst = false; // 设首拍：每次打拍都用媒体位置对齐首拍
   StreamSubscription<Duration>? _posSub;
@@ -34,9 +40,20 @@ class _PlayerPageState extends State<PlayerPage> {
   StreamSubscription<ProcessingState>? _procSub;
   bool _handlingEnded = false;
 
+  static const String _prefMetOn = 'runbpm.metronomeOn';
+  static const String _prefPhaseNudge = 'runbpm.phaseNudge';
+  static const String _prefBeatMode = 'runbpm.beatMode';
+  static const String _prefTapSound = 'runbpm.tapSound';
+
   @override
   void initState() {
     super.initState();
+    // 先用默认值初始化，异步读盘后再补用持久化值（读盘很快，UI 一帧内即到位）。
+    _activeBeatMode = BeatMode.grid;
+    _phaseNudgePct = 0.0;
+    _metEnabled = true;
+    _tapSoundOn = false;
+    _loadPrefs();
     final player = context.read<AudioPlayerService>().player;
     _posSub = player.positionStream.listen((_) {
       if (mounted) setState(() {});
@@ -45,7 +62,7 @@ class _PlayerPageState extends State<PlayerPage> {
       if (!mounted) return;
       context.read<QueueService>().setPlaying(ps.playing);
       if (ps.playing) {
-        _reAnchor(player);
+        _onPlaybackStart(player);
       }
     });
     _durSub = player.durationStream.listen((_) {
@@ -60,6 +77,55 @@ class _PlayerPageState extends State<PlayerPage> {
         _onEnded(player);
       }
     });
+  }
+
+  /// 读取持久化设置（对应 Web 的 localStorage 记忆）。
+  Future<void> _loadPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    final bpm = prefs.getDouble(_prefPhaseNudge) ?? 0.0;
+    final modeStr = prefs.getString(_prefBeatMode) ?? BeatMode.grid.name;
+    BeatMode? mode;
+    for (final m in BeatMode.values) {
+      if (m.name == modeStr) {
+        mode = m;
+        break;
+      }
+    }
+    setState(() {
+      _phaseNudgePct = bpm.clamp(-50.0, 50.0);
+      if (mode != null) _activeBeatMode = mode;
+      _metEnabled = prefs.getBool(_prefMetOn) ?? true;
+      _tapSoundOn = prefs.getBool(_prefTapSound) ?? false;
+    });
+  }
+
+  Future<void> _savePref(String key, Object value) async {
+    final prefs = await SharedPreferences.getInstance();
+    switch (value) {
+      case final bool b:
+        await prefs.setBool(key, b);
+      case final double d:
+        await prefs.setDouble(key, d);
+      case final String s:
+        await prefs.setString(key, s);
+      case final int i:
+        await prefs.setInt(key, i);
+      default:
+        break;
+    }
+  }
+
+  /// 播放开始时：若节拍器设置开启则自动开启节拍器并锚定（对齐 Web 默认开启）。
+  Future<void> _onPlaybackStart(AudioPlayer player) async {
+    final met = context.read<Metronome>();
+    final q = context.read<QueueService>();
+    if (_metEnabled && !met.isEnabled) {
+      await met.ensureInitialized();
+      met.setBpm(q.current?.targetBpm ?? 120);
+      met.setEnabled(true);
+    }
+    _reAnchor(player);
   }
 
   @override
@@ -251,7 +317,7 @@ class _PlayerPageState extends State<PlayerPage> {
                 ),
               ),
             const SizedBox(height: 8),
-            _buildBeatRuler(beatList, player),
+            _buildBeatRuler(beatList, player, _tapMarks),
             const SizedBox(height: 8),
             _buildBeatControls(context, met, player, current.targetBpm),
             const SizedBox(height: 12),
@@ -392,6 +458,11 @@ class _PlayerPageState extends State<PlayerPage> {
     final svc = context.read<AudioPlayerService>();
     var cur = q.current;
     if (cur == null) return;
+    // 切歌时清空打拍校准与标尺标记（对应 Web 切换曲目时清空 tapMarks）。
+    _tapWallSec.clear();
+    _tapMediaSec.clear();
+    _tapMarks.clear();
+    _tapBpm = null;
     var attempts = 0;
     while (cur != null && attempts < _maxFailures) {
       if (await svc.tryPlay(cur)) {
@@ -410,7 +481,7 @@ class _PlayerPageState extends State<PlayerPage> {
 
   static const int _maxFailures = 3 + 1;
 
-  Widget _buildBeatRuler(List<double> beats, AudioPlayer player) {
+  Widget _buildBeatRuler(List<double> beats, AudioPlayer player, List<double> tapMarks) {
     if (beats.isEmpty) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 8),
@@ -422,6 +493,7 @@ class _PlayerPageState extends State<PlayerPage> {
     return BeatRuler(
       beats: beats,
       getPositionSeconds: () => player.position.inMilliseconds / 1000.0,
+      tapMarks: tapMarks,
     );
   }
 
@@ -451,6 +523,7 @@ class _PlayerPageState extends State<PlayerPage> {
                     selected: _activeBeatMode == m.id,
                     onSelected: (_) {
                       setState(() => _activeBeatMode = m.id);
+                      _savePref(_prefBeatMode, m.id.name);
                       if (met.isEnabled) _reAnchor(player);
                     },
                   ),
@@ -470,6 +543,7 @@ class _PlayerPageState extends State<PlayerPage> {
                     label: '${_phaseNudgePct.round()}%',
                     onChanged: (v) {
                       setState(() => _phaseNudgePct = v);
+                      _savePref(_prefPhaseNudge, v);
                       if (met.isEnabled) {
                         met.setPhaseOffset(_phaseNudgeSeconds(targetBpm));
                         met.reAnchor(player.position);
@@ -528,6 +602,17 @@ class _PlayerPageState extends State<PlayerPage> {
                 onSelected: (v) => setState(() => _tapSetFirst = v),
               ),
             ),
+            const SizedBox(width: 8),
+            // 🔊 打拍音效开关（对应 Web，默认关、持久化）
+            FilterChip(
+              avatar: const Icon(Icons.volume_up, size: 16),
+              label: Text(_tapSoundOn ? '音效开' : '音效关'),
+              selected: _tapSoundOn,
+              onSelected: (v) {
+                setState(() => _tapSoundOn = v);
+                _savePref(_prefTapSound, v);
+              },
+            ),
           ],
         ),
         if (_tapBpm != null && _tapWallSec.length >= 8)
@@ -557,6 +642,7 @@ class _PlayerPageState extends State<PlayerPage> {
                     setState(() {
                       _tapWallSec.clear();
                       _tapMediaSec.clear();
+                      _tapMarks.clear();
                       _tapBpm = null;
                     });
                   },
@@ -570,9 +656,18 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   void _onTap(Metronome met, AudioPlayer player, double targetBpm) {
+    // 打拍音效开关（对应 Web 🔊 音效，默认关、持久化）
+    if (_tapSoundOn) {
+      met.playTapClick();
+    }
     final media = player.position.inMilliseconds / 1000.0;
     _tapWallSec.add(DateTime.now().millisecondsSinceEpoch / 1000.0);
     _tapMediaSec.add(media);
+    // 标尺上显示最近 20 个打拍标记（琥珀色）
+    _tapMarks.add(media);
+    if (_tapMarks.length > 20) {
+      _tapMarks.removeRange(0, _tapMarks.length - 20);
+    }
     if (_tapSetFirst && met.isEnabled) {
       met.setPhase(media);
       met.setPhaseOffset(_phaseNudgeSeconds(targetBpm));
@@ -608,9 +703,12 @@ class _PlayerPageState extends State<PlayerPage> {
               children: [
                 const Text('节拍器'),
                 Switch(
-                  value: met.isEnabled,
+                  value: _metEnabled,
                   onChanged: (v) async {
                     if (v) {
+                      // 记录用户意图（默认开启，对齐 Web），持久化后再建池启用。
+                      _metEnabled = true;
+                      _savePref(_prefMetOn, true);
                       // 先确保节拍器声音池就绪（写 WAV + 预建播放器池），
                       // 再启用定时器，最后才锚定拍点/相位 ——
                       // 顺序很关键：若在 setEnabled 前 _reAnchor，
@@ -621,6 +719,8 @@ class _PlayerPageState extends State<PlayerPage> {
                       met.setEnabled(true);
                       _reAnchor(player);
                     } else {
+                      _metEnabled = false;
+                      _savePref(_prefMetOn, false);
                       met.setEnabled(false);
                     }
                     setState(() {});

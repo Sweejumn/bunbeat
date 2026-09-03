@@ -43,6 +43,11 @@ class Metronome {
   double _volume = 0.5;
   String? _clickPath;
 
+  /// 打拍校准的即时「滴答」音（G6 1568Hz），独立于节拍器声音池，
+  /// 即使节拍器关闭也能响（对应 Web 的 playTapClick）。
+  String? _tapPath;
+  AudioPlayer? _tapPlayer;
+
   /// 每次计划点击时回调（用于 UI 上的拍点指示器）。
   void Function(double mediaSeconds)? onClick;
 
@@ -59,6 +64,79 @@ class Metronome {
     await _initPool();
   }
 
+  /// 初始化并播放一次「打拍滴答」（G6 1568Hz）。
+  ///
+  /// 独立于节拍器声音池：打拍音效在节拍器关闭时也要能响（手动校准靠耳朵听）。
+  /// 首次调用会生成 1568Hz 的 tap WAV 并创建一个专用播放器，之后直接 play()。
+  Future<void> playTapClick() async {
+    if (_tapPath == null) {
+      final dir = await getTemporaryDirectory();
+      _tapPath = p.join(dir.path, 'runbpm_tap.wav');
+      if (!await File(_tapPath!).exists()) {
+        await _writeTapWav(_tapPath!);
+      }
+    }
+    _tapPlayer ??= (() {
+      final pl = AudioPlayer();
+      pl.setLoopMode(LoopMode.off);
+      return pl;
+    })();
+    try {
+      await _tapPlayer!.setFilePath(_tapPath!);
+      await _tapPlayer!.setVolume(_volume);
+      unawaited(_tapPlayer!.seek(Duration.zero).then((_) => _tapPlayer!.play()));
+    } catch (_) {}
+  }
+
+  /// 生成一个 70ms 的 G6（1568Hz）方形波「滴答」，写为单声道 16-bit WAV，
+  /// 对应 Web metronome.playTapClick（osc frequency 1568, square, 0.07s）。
+  Future<void> _writeTapWav(String path) async {
+    final sr = 44100;
+    final freq = 1568.0; // G6
+    final dur = 0.07;
+    final n = (sr * dur).round();
+    final bytes = ByteData(n * 2);
+    for (int i = 0; i < n; i++) {
+      final t = i / sr;
+      // 指数衰减的方波（比节拍器 2kHz 更高且更脆，便于和节拍区分）
+      final env = math.exp(-45 * t);
+      final v = (math.sin(2 * math.pi * freq * t) >= 0 ? 1.0 : -1.0) * env;
+      final s16 = (v * 0.35 * 32767).round().clamp(-32768, 32767);
+      bytes.setInt16(i * 2, s16, Endian.little);
+    }
+    await _writeWavFile(path, bytes, n, sr);
+  }
+
+  /// 通用 WAV 写出（44 字节头 + PCM16 数据）。
+  Future<void> _writeWavFile(String path, ByteData bytes, int n, int sr) async {
+    final header = ByteData(44);
+    void ascii(int off, String s) {
+      for (int i = 0; i < s.length; i++) {
+        header.setUint8(off + i, s.codeUnitAt(i));
+      }
+    }
+
+    ascii(0, 'RIFF');
+    header.setUint32(4, 36 + n * 2, Endian.little);
+    ascii(8, 'WAVE');
+    ascii(12, 'fmt ');
+    header.setUint32(16, 16, Endian.little);
+    header.setUint16(20, 1, Endian.little); // PCM
+    header.setUint16(22, 1, Endian.little); // mono
+    header.setUint32(24, sr, Endian.little);
+    header.setUint32(28, sr * 2, Endian.little); // byte rate
+    header.setUint16(32, 2, Endian.little); // block align
+    header.setUint16(34, 16, Endian.little); // bits
+    ascii(36, 'data');
+    header.setUint32(40, n * 2, Endian.little);
+
+    final wav = Uint8List(44 + n * 2);
+    wav.setRange(0, 44, header.buffer.asUint8List());
+    wav.setRange(44, 44 + n * 2, bytes.buffer.asUint8List());
+    await File(path).writeAsBytes(wav, flush: true);
+  }
+
+
   /// 预先创建并加载节拍器声音池：每个播放器都在初始化时设好文件路径与音量，
   /// 之后每次点击只 `play()`，不再有按次加载文件的延迟 —— 这是“时有时无”
   /// 的根本修复（旧版每次点击都要 setFilePath，延迟未达标就会丢拍）。
@@ -73,7 +151,7 @@ class Metronome {
         // seek 到结尾，避免刚创建时 playing 流状态干扰
         _pool.add(pl);
         _poolLastUsedMs.add(0);
-      } catch (_) {
+      } catch (e) {
         // 若某个播放器初始化失败，跳过（其余仍可工作）
       }
     }
@@ -148,6 +226,8 @@ class Metronome {
       pl.dispose();
     }
     _pool.clear();
+    _tapPlayer?.dispose();
+    _tapPlayer = null;
   }
 
   void _restart() {
@@ -225,31 +305,6 @@ class Metronome {
       final s16 = (v * 0.8 * 32767).round().clamp(-32768, 32767);
       bytes.setInt16(i * 2, s16, Endian.little);
     }
-    // 44-byte WAV header
-    final header = ByteData(44);
-    void ascii(int off, String s) {
-      for (int i = 0; i < s.length; i++) {
-        header.setUint8(off + i, s.codeUnitAt(i));
-      }
-    }
-
-    ascii(0, 'RIFF');
-    header.setUint32(4, 36 + n * 2, Endian.little);
-    ascii(8, 'WAVE');
-    ascii(12, 'fmt ');
-    header.setUint32(16, 16, Endian.little);
-    header.setUint16(20, 1, Endian.little); // PCM
-    header.setUint16(22, 1, Endian.little); // mono
-    header.setUint32(24, sr, Endian.little);
-    header.setUint32(28, sr * 2, Endian.little); // byte rate
-    header.setUint16(32, 2, Endian.little); // block align
-    header.setUint16(34, 16, Endian.little); // bits
-    ascii(36, 'data');
-    header.setUint32(40, n * 2, Endian.little);
-
-    final wav = Uint8List(44 + n * 2);
-    wav.setRange(0, 44, header.buffer.asUint8List());
-    wav.setRange(44, 44 + n * 2, bytes.buffer.asUint8List());
-    await File(path).writeAsBytes(wav, flush: true);
+    await _writeWavFile(path, bytes, n, sr);
   }
 }
