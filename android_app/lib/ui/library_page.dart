@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../models/song.dart';
 import '../services/audio_reader.dart';
 import '../services/library_service.dart';
+import '../services/bpm_display_controller.dart';
 import 'marquee_text.dart';
 import 'settings_page.dart';
 
@@ -184,7 +185,7 @@ class _LibraryPageState extends State<LibraryPage> {
         return song.bpmError ?? '分析失败';
       case BpmStatus.done:
         final conf = (song.bpmConfidence ?? 0) * 100;
-        return '${song.originalBpm!.round()} BPM · 可信度 ${conf.round()}%';
+        return '${context.read<BpmDisplayController>().format(song.originalBpm)} BPM · 可信度 ${conf.round()}%';
     }
   }
 
@@ -449,7 +450,7 @@ class _SongTile extends StatelessWidget {
     required this.onLongPress,
   });
 
-  String _statusText() {
+  String _statusText(BuildContext outer) {
     switch (song.bpmStatus) {
       case BpmStatus.pending:
         return '等待分析';
@@ -459,7 +460,7 @@ class _SongTile extends StatelessWidget {
         return song.bpmError ?? '分析失败';
       case BpmStatus.done:
         final conf = (song.bpmConfidence ?? 0) * 100;
-        return '${song.originalBpm!.round()} BPM · 可信度 ${conf.round()}%';
+        return '${outer.read<BpmDisplayController>().format(song.originalBpm)} BPM · 可信度 ${conf.round()}%';
     }
   }
 
@@ -493,7 +494,7 @@ class _SongTile extends StatelessWidget {
         ),
       ),
       title: MarqueeText(song.title),
-      subtitle: Text(_statusText(), style: TextStyle(color: color)),
+      subtitle: Text(_statusText(context), style: TextStyle(color: color)),
       // 与推荐页对齐：不显示三点/勾选等 trailing 图标，仅用主题色高亮标记选中。
     );
   }

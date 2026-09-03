@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'services/audio_player_service.dart';
+import 'services/bpm_display_controller.dart';
 import 'services/library_service.dart';
 import 'services/metronome.dart';
 import 'services/queue_service.dart';
@@ -28,6 +29,7 @@ class _RunBpmAppState extends State<RunBpmApp> {
         ChangeNotifierProvider(create: (_) => LibraryService()),
         ChangeNotifierProvider(create: (_) => QueueService()),
         ChangeNotifierProvider(create: (_) => ThemeController()),
+        ChangeNotifierProvider(create: (_) => BpmDisplayController()),
         Provider(create: (_) => AudioPlayerService()),
         Provider(create: (_) => Metronome()),
       ],
@@ -79,6 +81,7 @@ class _StartupGateState extends State<_StartupGate> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         context.read<LibraryService>().restoreLastFolder();
         context.read<ThemeController>().load();
+        context.read<BpmDisplayController>().load();
       });
     }
   }

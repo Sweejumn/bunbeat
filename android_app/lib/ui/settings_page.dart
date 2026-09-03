@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../services/bpm_display_controller.dart';
 import '../services/theme_controller.dart';
 import 'about_page.dart';
 import 'help_dialog.dart';
@@ -14,6 +15,7 @@ class SettingsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final themeCtrl = context.watch<ThemeController>();
+    final bpmCtrl = context.watch<BpmDisplayController>();
 
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
@@ -75,6 +77,19 @@ class SettingsPage extends StatelessWidget {
                   ),
                 ],
               ),
+            ),
+          ),
+
+          // BPM 显示格式
+          _sectionHeader(theme, 'BPM 显示'),
+          Card(
+            margin: const EdgeInsets.symmetric(horizontal: 12),
+            child: SwitchListTile(
+              secondary: const Icon(Icons.numbers),
+              title: const Text('BPM 保留两位小数'),
+              subtitle: const Text('曲库/推荐/播放页的 BPM 显示两位小数；关闭则按整数显示。（跑步设置除外）'),
+              value: bpmCtrl.twoDecimals,
+              onChanged: (v) => bpmCtrl.setTwoDecimals(v),
             ),
           ),
 

@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/song.dart';
 import '../services/audio_player_service.dart';
 import '../services/library_service.dart';
+import '../services/bpm_display_controller.dart';
 import '../services/metronome.dart';
 import '../services/queue_service.dart';
 import 'beat_ruler.dart';
@@ -297,9 +298,9 @@ class _PlayerPageState extends State<PlayerPage> {
                                         Theme.of(context).textTheme.titleLarge),
                                 const SizedBox(height: 8),
                                 Text(
-                                    '${current.originalBpm.round()}→${current.targetBpm.round()} BPM'),
+                                    '${context.read<BpmDisplayController>().format(current.originalBpm)}→${context.read<BpmDisplayController>().format(current.targetBpm)} BPM'),
                                 Text('变速 ×${speed.toStringAsFixed(2)}'),
-                                Text('实际节奏 ≈ ${displayBpm.round()} BPM',
+                                Text('实际节奏 ≈ ${context.read<BpmDisplayController>().format(displayBpm)} BPM',
                                     style: Theme.of(context).textTheme.bodySmall),
                               ],
                             ),
@@ -620,7 +621,7 @@ class _PlayerPageState extends State<PlayerPage> {
                 onPressed: () => _onTap(met, player, targetBpm),
                 icon: const Icon(Icons.touch_app),
                 label: Text(_tapBpm != null
-                    ? '测出 ${_tapBpm!.round()} BPM · 再点 ${8 - _tapMediaSec.length} 下'
+                    ? '测出 ${context.read<BpmDisplayController>().format(_tapBpm)} BPM · 再点 ${8 - _tapMediaSec.length} 下'
                     : '点击 ${8 - _tapMediaSec.length} 下'),
               ),
             ),
@@ -653,7 +654,7 @@ class _PlayerPageState extends State<PlayerPage> {
             child: Row(
               children: [
                 Text(
-                  '测得节拍 ${_tapBpm!.round()} BPM',
+                  '测得节拍 ${context.read<BpmDisplayController>().format(_tapBpm)} BPM',
                   style: const TextStyle(color: Colors.greenAccent),
                 ),
                 const Spacer(),
@@ -760,7 +761,7 @@ class _PlayerPageState extends State<PlayerPage> {
                   },
                 ),
                 const Spacer(),
-                Text('${targetBpm.round()} BPM'),
+                Text('${context.read<BpmDisplayController>().format(targetBpm)} BPM'),
               ],
             ),
             // 音乐 + 拍子音量（对齐 Web：两个滑杆同一行各占一半）

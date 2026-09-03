@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../models/song.dart';
 import '../services/audio_player_service.dart';
 import '../services/library_service.dart';
+import '../services/bpm_display_controller.dart';
 import '../services/queue_service.dart';
 import 'help_dialog.dart';
 import 'marquee_text.dart';
@@ -237,7 +238,7 @@ class _RecTile extends StatelessWidget {
           Expanded(
             child: Text(
               orig != null
-                  ? '${orig.round()} BPM · ${grade.pctLabel} · ${r.distance.toStringAsFixed(1)}'
+                  ? '${context.read<BpmDisplayController>().format(orig)} BPM · ${grade.pctLabel} · ${r.distance.toStringAsFixed(1)}'
                   : '未知 BPM',
               overflow: TextOverflow.ellipsis,
             ),
