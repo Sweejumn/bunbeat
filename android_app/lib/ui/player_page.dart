@@ -804,7 +804,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             const SizedBox(width: 8),
             _toggleButton(
               context,
-              label: _tapSoundOn ? '音效 开' : '音效 关',
+              label: '音效',
               title: '点按打拍时是否播放滴答音效',
               active: _tapSoundOn,
               onTap: () {
@@ -1258,11 +1258,10 @@ class _TapPulseButtonState extends State<_TapPulseButton>
           return Transform.scale(
             scale: scale,
             child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: scheme.primaryContainer,
-                borderRadius: BorderRadius.circular(22),
+                shape: BoxShape.circle,
                 boxShadow: glow > 0
                     ? [
                         BoxShadow(
@@ -1273,19 +1272,10 @@ class _TapPulseButtonState extends State<_TapPulseButton>
                       ]
                     : null,
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.touch_app, color: scheme.onPrimaryContainer),
-                  const SizedBox(width: 6),
-                  Text(
-                    '点按打拍',
-                    style: TextStyle(
-                      color: scheme.onPrimaryContainer,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
+              child: Icon(
+                Icons.touch_app,
+                size: 28,
+                color: scheme.onPrimaryContainer,
               ),
             ),
           );
