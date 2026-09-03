@@ -310,14 +310,20 @@ class _LibraryPageState extends State<LibraryPage> {
     return list;
   }
 
+  /// 按用户点击顺序返回选中的歌曲。
+  /// `_selected` 是插入序的 LinkedHashSet，其迭代顺序即点击先后，
+  /// 因此这里遍历 `_selected`（而不是反查 `lib.songs`）以保证加入播放列表的顺序与点击一致。
+  List<Song> _selectedSongs(LibraryService lib) {
+    final byId = {for (final s in lib.songs) s.id: s};
+    return [for (final id in _selected) if (byId[id] != null) byId[id]!];
+  }
+
   /// 长按弹出操作菜单（加入播放列表 / 归档 / 重新检测 / BPM 修改）。
   Future<void> _showActions(
       BuildContext context, LibraryService lib, Song song) async {
     // 判断当前选中（或长按这一首）是否已全部在播放列表里，据此显示「删除」还是「加入」。
     final queue = context.read<QueueService>();
-    final targets = _selected.isNotEmpty
-        ? lib.songs.where((s) => _selected.contains(s.id)).toList()
-        : <Song>[song];
+    final targets = _selected.isNotEmpty ? _selectedSongs(lib) : <Song>[song];
     final targetPaths = {
       for (final s in targets)
         if (s.hasBpm) s.filePath,
@@ -417,7 +423,7 @@ class _LibraryPageState extends State<LibraryPage> {
       BuildContext context, LibraryService lib, Song longPressed) async {
     final List<Song> target;
     if (_selected.isNotEmpty) {
-      target = lib.songs.where((s) => _selected.contains(s.id)).toList();
+      target = _selectedSongs(lib); // 按点击顺序
     } else {
       target = [longPressed];
     }

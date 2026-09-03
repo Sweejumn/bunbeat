@@ -159,7 +159,13 @@ class _RecommendPageState extends State<RecommendPage> {
 
   void _play(BuildContext context, LibraryService lib) {
     final queue = context.read<QueueService>();
-    final selected = lib.songs.where((s) => _selected.contains(s.id)).toList();
+    // 按点击顺序（_selected 是插入序的 LinkedHashSet，其迭代顺序即点击先后）取选中的歌曲，
+    // 这样加入播放列表的顺序与用户点选顺序一致。
+    final byId = {for (final s in lib.songs) s.id: s};
+    final selected = <Song>[
+      for (final id in _selected)
+        if (byId[id] != null) byId[id]!,
+    ];
     final playlist = lib.buildPlaylist(selected, target: lib.targetBpm);
     queue.start(playlist);
     // 真正开始播放第一首（与「变速并播放」文案一致），
