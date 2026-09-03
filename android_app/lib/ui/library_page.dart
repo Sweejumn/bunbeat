@@ -9,14 +9,23 @@ import '../services/library_service.dart';
 import 'marquee_text.dart';
 import 'settings_page.dart';
 
-class LibraryPage extends StatelessWidget {
+class LibraryPage extends StatefulWidget {
   const LibraryPage({super.key});
+
+  @override
+  State<LibraryPage> createState() => _LibraryPageState();
+}
+
+class _LibraryPageState extends State<LibraryPage> {
+  /// 单击选中的歌曲 id 集合（用主题色高亮，类比安卓文件管理）。
+  final Set<String> _selected = {};
 
   Future<void> _pickFolder(BuildContext context, LibraryService lib) async {
     final reader = AudioReader();
     final pick = await reader.pickFolder(withSubfolders: true);
     if (pick.cancelled) return;
     if (context.mounted) {
+      _selected.clear();
       await lib.loadFolder(pick);
     }
   }
@@ -36,11 +45,6 @@ class LibraryPage extends StatelessWidget {
               MaterialPageRoute(builder: (_) => const SettingsPage()),
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.folder_open),
-            tooltip: '选择文件夹',
-            onPressed: () => _pickFolder(context, lib),
-          ),
         ],
       ),
       body: lib.folderPath == null
@@ -57,10 +61,127 @@ class LibraryPage extends StatelessWidget {
                           : lib.analyzingDone / lib.analyzingTotal,
                     ),
                   ),
-                Expanded(child: _SongList(lib: lib)),
+                Expanded(
+                  child: _SongList(
+                    lib: lib,
+                    selected: _selected,
+                    onToggle: (id) => setState(() {
+                      if (!_selected.remove(id)) _selected.add(id);
+                    }),
+                    onLongPress: (song) => _showActions(context, lib, song),
+                  ),
+                ),
               ],
             ),
     );
+  }
+
+  /// 长按弹出操作菜单（重新检测 / 乘二 / 除以二 / 手动修改）。
+  Future<void> _showActions(
+      BuildContext context, LibraryService lib, Song song) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.music_note),
+              title: MarqueeText(song.title),
+              subtitle: Text(_statusText(song)),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.refresh),
+              title: const Text('重新检测'),
+              subtitle: const Text('重新分析这首歌曲的 BPM'),
+              onTap: () => Navigator.pop(ctx, 'retry'),
+            ),
+            if (song.hasBpm) ...[
+              ListTile(
+                leading: const Icon(Icons.double_arrow),
+                title: const Text('BPM ×2'),
+                subtitle: const Text('把 BPM 乘以二（常用于半拍/休止误判）'),
+                onTap: () => Navigator.pop(ctx, 'x2'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.horizontal_rule),
+                title: const Text('BPM ÷2'),
+                subtitle: const Text('把 BPM 除以二'),
+                onTap: () => Navigator.pop(ctx, 'div2'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.edit),
+                title: const Text('手动修改'),
+                subtitle: const Text('直接输入一个数值作为 BPM'),
+                onTap: () => Navigator.pop(ctx, 'manual'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+
+    if (action == null || !mounted) return;
+    switch (action) {
+      case 'retry':
+        lib.retryAnalyze(song);
+        break;
+      case 'x2':
+        lib.setManualBpm(song, ((song.originalBpm ?? 0) * 2).clamp(20, 400));
+        break;
+      case 'div2':
+        lib.setManualBpm(song, ((song.originalBpm ?? 0) / 2).clamp(20, 400));
+        break;
+      case 'manual':
+        await _editBpm(context, lib, song);
+        break;
+    }
+  }
+
+  String _statusText(Song song) {
+    switch (song.bpmStatus) {
+      case BpmStatus.pending:
+        return '等待分析';
+      case BpmStatus.analyzing:
+        return '分析中…';
+      case BpmStatus.failed:
+        return song.bpmError ?? '分析失败';
+      case BpmStatus.done:
+        final conf = (song.bpmConfidence ?? 0) * 100;
+        return '${song.originalBpm!.round()} BPM · 可信度 ${conf.round()}%';
+    }
+  }
+
+  Future<void> _editBpm(
+      BuildContext context, LibraryService lib, Song song) async {
+    final controller = TextEditingController(
+      text: song.originalBpm?.round().toString() ?? '',
+    );
+    final value = await showDialog<double>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('修改 BPM'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(labelText: 'BPM (20–400)'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(
+            onPressed: () {
+              final v = double.tryParse(controller.text);
+              if (v != null && v >= 20 && v <= 400) Navigator.pop(ctx, v);
+            },
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+    if (value != null) {
+      lib.setManualBpm(song, value);
+    }
   }
 }
 
@@ -107,7 +228,15 @@ class _FolderHeader extends StatelessWidget {
 
 class _SongList extends StatelessWidget {
   final LibraryService lib;
-  const _SongList({required this.lib});
+  final Set<String> selected;
+  final ValueChanged<String> onToggle;
+  final void Function(Song) onLongPress;
+  const _SongList({
+    required this.lib,
+    required this.selected,
+    required this.onToggle,
+    required this.onLongPress,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -118,7 +247,12 @@ class _SongList extends StatelessWidget {
       itemCount: lib.songs.length,
       itemBuilder: (context, i) {
         final s = lib.songs[i];
-        return _SongTile(song: s, lib: lib);
+        return _SongTile(
+          song: s,
+          selected: selected.contains(s.id),
+          onToggle: () => onToggle(s.id),
+          onLongPress: () => onLongPress(s),
+        );
       },
     );
   }
@@ -126,8 +260,15 @@ class _SongList extends StatelessWidget {
 
 class _SongTile extends StatelessWidget {
   final Song song;
-  final LibraryService lib;
-  const _SongTile({required this.song, required this.lib});
+  final bool selected;
+  final VoidCallback onToggle;
+  final VoidCallback onLongPress;
+  const _SongTile({
+    required this.song,
+    required this.selected,
+    required this.onToggle,
+    required this.onLongPress,
+  });
 
   String _statusText() {
     switch (song.bpmStatus) {
@@ -145,12 +286,18 @@ class _SongTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final color = switch (song.bpmStatus) {
       BpmStatus.done => Colors.greenAccent,
       BpmStatus.failed => Colors.redAccent,
       _ => Colors.orangeAccent,
     };
     return ListTile(
+      // 单击选中；长按弹出操作菜单。
+      onTap: onToggle,
+      onLongPress: onLongPress,
+      selected: selected,
+      selectedTileColor: theme.colorScheme.primary.withValues(alpha: 0.15),
       leading: ClipRRect(
         borderRadius: BorderRadius.circular(4),
         child: SizedBox(
@@ -168,53 +315,10 @@ class _SongTile extends StatelessWidget {
       ),
       title: MarqueeText(song.title),
       subtitle: Text(_statusText(), style: TextStyle(color: color)),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (song.hasBpm)
-            IconButton(
-              icon: const Icon(Icons.edit, size: 20),
-              tooltip: '手动修改 BPM',
-              onPressed: () => _editBpm(context),
-            ),
-          if (song.bpmStatus == BpmStatus.failed)
-            IconButton(
-              icon: const Icon(Icons.refresh, size: 20),
-              tooltip: '重试分析',
-              onPressed: () => lib.retryAnalyze(song),
-            ),
-        ],
-      ),
+      trailing: selected
+          ? Icon(Icons.check_circle,
+              color: theme.colorScheme.primary, size: 22)
+          : const Icon(Icons.more_vert, size: 20, color: Colors.white38),
     );
-  }
-
-  Future<void> _editBpm(BuildContext context) async {
-    final controller = TextEditingController(
-      text: song.originalBpm?.round().toString() ?? '',
-    );
-    final value = await showDialog<double>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('修改 BPM'),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(labelText: 'BPM (20–400)'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
-          FilledButton(
-            onPressed: () {
-              final v = double.tryParse(controller.text);
-              if (v != null && v >= 20 && v <= 400) Navigator.pop(ctx, v);
-            },
-            child: const Text('确定'),
-          ),
-        ],
-      ),
-    );
-    if (value != null) {
-      lib.setManualBpm(song, value);
-    }
   }
 }

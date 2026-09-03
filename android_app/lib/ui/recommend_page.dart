@@ -22,7 +22,8 @@ class RecommendPage extends StatefulWidget {
 
 class _RecommendPageState extends State<RecommendPage> {
   final Set<String> _selected = {};
-  double _lastAutoTarget = double.negativeInfinity;
+  // 仅在运动区间（mode）切换时才自动重选，避免拖动滑块时每帧整页重建导致不跟手。
+  int _lastAutoMode = -1;
 
   @override
   Widget build(BuildContext context) {
@@ -32,10 +33,11 @@ class _RecommendPageState extends State<RecommendPage> {
     final eligible = recs.where((r) => r.song.hasBpm).length;
     final target = lib.targetBpm;
 
-    // 对齐 Web：每次目标 BPM 变化（含首次载入）自动勾选所有可变速歌曲，
-    // 红色 ✕（>12%）的歌曲不自动选，仍保留用户手动选择。
-    if (_lastAutoTarget != target) {
-      _lastAutoTarget = target;
+    // 对齐 Web：仅在区间变化时自动勾选所有可变速歌曲（红色 ✕ 不自动选），
+    // 同一区间内的细微 BPM 拖动不触发整页重建，保证滑块跟手。
+    final modeKey = modeFromBpm(target).index;
+    if (_lastAutoMode != modeKey) {
+      _lastAutoMode = modeKey;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         setState(() {
@@ -163,7 +165,8 @@ class _RecommendPageState extends State<RecommendPage> {
     return (r.song.originalBpm! - target).abs() / orig <= 0.12;
   }
 
-  void _play(BuildContext context, LibraryService lib) {    final queue = context.read<QueueService>();
+  void _play(BuildContext context, LibraryService lib) {
+    final queue = context.read<QueueService>();
     final selected = lib.songs.where((s) => _selected.contains(s.id)).toList();
     final playlist = lib.buildPlaylist(selected, target: lib.targetBpm);
     queue.start(playlist);
@@ -196,8 +199,13 @@ class _RecTile extends StatelessWidget {
     final s = r.song;
     final orig = s.originalBpm;
     final grade = gradeTempo(orig, targetBpm);
+    final theme = Theme.of(context);
     return ListTile(
       onTap: onToggle,
+      // 对齐 Web：选中行用主题色高亮，不再显示勾选框。
+      selected: selected,
+      selectedTileColor: theme.colorScheme.primary.withValues(alpha: 0.15),
+      selectedColor: theme.colorScheme.primary,
       leading: ClipRRect(
         borderRadius: BorderRadius.circular(4),
         child: SizedBox(
@@ -235,11 +243,6 @@ class _RecTile extends StatelessWidget {
             ),
           ),
         ],
-      ),
-      // 整行可点选，勾选框仅作选中态显示（避免点击二次触发）。
-      trailing: Checkbox(
-        value: selected,
-        onChanged: null,
       ),
       dense: true,
     );

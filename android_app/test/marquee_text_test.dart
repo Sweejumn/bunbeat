@@ -29,6 +29,7 @@ void main() {
       ),
     );
     await tester.pump(); // 不 pumpAndSettle：跑马灯在长文字下会无限循环。
-    expect(find.text(long), findsOneWidget);
+    // 无缝跑马灯渲染两份文字（首段 + 紧随其后的第二段），静态下两份都在。
+    expect(find.text(long), findsNWidgets(2));
   });
 }

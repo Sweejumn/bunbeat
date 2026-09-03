@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 
 /// 单行文字若超出可用宽度则自动水平滚动显示（跑马灯/横滚），
 /// 否则静止显示为单行省略。用于曲库/推荐里较长的歌名。
+///
+/// 采用「双文本段 + Transform.translate」的标准无缝跑马灯：
+/// 绘制两份相同文字，一周期内整体左移一个「文字宽 + 间距」，
+/// 首份完全滚出时第二份恰好接上，视觉上连续滚动、永不停顿。
 class MarqueeText extends StatefulWidget {
   const MarqueeText(
     this.text, {
@@ -18,36 +22,24 @@ class MarqueeText extends StatefulWidget {
 
 class _MarqueeTextState extends State<MarqueeText>
     with SingleTickerProviderStateMixin {
-  // 每周期末尾多留一段空隙，循环跳回起点时更接近无缝横滚。
-  static const double _GAP = 48.0;
+  // 两段文字之间的空隙。
+  static const double _kGap = 48.0;
+  static const Duration _duration = Duration(seconds: 6);
 
-  final ScrollController _controller = ScrollController();
   late final AnimationController _anim;
-  double _maxScroll = 0;
+  // 需要的动画进度：一段需要移动的总距离（文字宽 + 间距）。
+  double _cycle = 0;
 
   @override
   void initState() {
     super.initState();
-    _anim = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 6),
-    )
-      ..addListener(_tick)
-      ..repeat();
+    _anim = AnimationController(vsync: this, duration: _duration)..repeat();
   }
 
   @override
   void dispose() {
     _anim.dispose();
-    _controller.dispose();
     super.dispose();
-  }
-
-  void _tick() {
-    if (_maxScroll <= 0 || !_controller.hasClients) return;
-    // 动画值 0→1 对应滚动 0 → 末尾(+空隙缓冲)，满周期跳回起点循环。
-    final p = _anim.value * (_maxScroll + _GAP);
-    _controller.jumpTo(p > _maxScroll ? _maxScroll : p);
   }
 
   @override
@@ -61,10 +53,11 @@ class _MarqueeTextState extends State<MarqueeText>
           maxLines: 1,
           textDirection: TextDirection.ltr,
         )..layout();
-        final overflow = tp.width - maxWidth;
-        _maxScroll = overflow > 0 ? overflow : 0;
+        final textWidth = tp.width;
 
-        if (overflow <= 0) {
+        // 只有当文字超出可用宽度时才滚动。
+        if (textWidth <= maxWidth) {
+          _cycle = 0;
           return Text(
             widget.text,
             style: style,
@@ -72,17 +65,45 @@ class _MarqueeTextState extends State<MarqueeText>
             overflow: TextOverflow.ellipsis,
           );
         }
+
+        // 一周期移动 文本宽 + 间距；两段紧邻即可无缝。
+        // OverflowBox 给内部 Row 无界宽度（自然尺寸可超出裁剪区），由外层
+        // ClipRect 负责裁剪；这是用于无缝跑马灯、故意允许溢出的标准做法，
+        // 不会触发 RenderFlex 溢出报错，滚动永不停顿。
+        _cycle = textWidth + _kGap;
+        final offset = -(_anim.value * _cycle);
+
         return ClipRect(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            controller: _controller,
-            physics: const NeverScrollableScrollPhysics(),
-            child: Text(
-              widget.text,
-              style: style,
-              maxLines: 1,
-              softWrap: false,
-            ),
+          child: AnimatedBuilder(
+            animation: _anim,
+            builder: (context, _) {
+              return Transform.translate(
+                offset: Offset(offset, 0),
+                child: OverflowBox(
+                  minWidth: 0,
+                  maxWidth: double.infinity,
+                  alignment: Alignment.centerLeft,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        widget.text,
+                        style: style,
+                        maxLines: 1,
+                        softWrap: false,
+                      ),
+                      const SizedBox(width: 48),
+                      Text(
+                        widget.text,
+                        style: style,
+                        maxLines: 1,
+                        softWrap: false,
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
           ),
         );
       },

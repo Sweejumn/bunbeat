@@ -143,6 +143,22 @@ class _ModePickerState extends State<ModePicker> {
           ],
         ),
         const SizedBox(height: 10),
+        // 当前模式横幅（放在四个快捷芯片上方）。
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(
+            isCustom
+                ? '${activeDef.icon} ${activeDef.label} · 区间外自定义（手动输入）'
+                : '${activeDef.icon} ${activeDef.label} · ${activeDef.rangeLow}–${activeDef.rangeHigh} BPM',
+            style: const TextStyle(fontSize: 13),
+          ),
+        ),
+        const SizedBox(height: 10),
         // Quick-jump 芯片（走路/慢跑/跑步/快跑）：放在滑块上方，便于单手快速选模式，
         // 也让滑块相对页面居中以方便拖动。
         Row(
@@ -185,21 +201,6 @@ class _ModePickerState extends State<ModePicker> {
         const SizedBox(height: 2),
         _buildZoneLabels(),
         const SizedBox(height: 6),
-        // 当前模式横幅
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Text(
-            isCustom
-                ? '${activeDef.icon} ${activeDef.label} · 区间外自定义（手动输入）'
-                : '${activeDef.icon} ${activeDef.label} · ${activeDef.rangeLow}–${activeDef.rangeHigh} BPM',
-            style: const TextStyle(fontSize: 13),
-          ),
-        ),
       ],
     );
   }
@@ -240,7 +241,7 @@ class _ModePickerState extends State<ModePicker> {
               child: Slider(
                 min: _kMin.toDouble(),
                 max: _kMax.toDouble(),
-                divisions: _kMax - _kMin,
+                // 无 divisions：连续值，拖动更跟手（不与推荐页整页重建冲突）。
                 value: _bpm.clamp(_kMin.toDouble(), _kMax.toDouble()),
                 label: _bpm.round().toString(),
                 onChanged: _handleSlider,
