@@ -1,14 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 
 /// 单行文字若超出可用宽度则自动水平滚动显示（跑马灯/横滚），
 /// 否则静止显示为单行省略。用于曲库/推荐里较长的歌名。
 ///
-/// 实现：在 SingleChildScrollView 里渲染两份相同文字（中间隔一段空隙），
-/// 用每帧 Ticker 让滚动位置随流逝时间平滑前进，并对「文字宽+空隙」取模。
-/// 由于位移一整段时第二份恰好接上第一份，取模回绕在视觉上无缝、也不会有
-/// 0→1 循环动画那种"到顶回跳"的停顿；用 SingleChildScrollView 渲染也更
-/// 稳定可靠（不会像 Transform/OverflowBox 那样在真机 ListTile 里丢内容）。
+/// 实现：Stack + Positioned 布置两份相同文字（第二份相对第一份偏移
+/// 恰好一整段「文字宽+空隙」），用 Transform.translate 整体左移。
+/// 动画值 0→1 位移正好一整段，回绕时第二份恰好接上第一份，视觉无缝、
+/// 连续滚动、永不停顿。用 Stack+Positioned 而非 Row/OverflowBox，
+/// 避免柔性布局宽度误差导致的回绕跳变。
 class MarqueeText extends StatefulWidget {
   const MarqueeText(
     this.text, {
@@ -27,34 +26,24 @@ class _MarqueeTextState extends State<MarqueeText>
     with SingleTickerProviderStateMixin {
   // 两段文字之间的空隙。
   static const double _kGap = 48.0;
-  // 滚动速度（像素/秒）。
-  static const double _kSpeed = 90.0;
+  static const Duration _duration = Duration(seconds: 6);
 
-  final ScrollController _controller = ScrollController();
-  late final Ticker _ticker;
-  // 一周期滚动的距离 = 文字宽 + 空隙。
+  late final AnimationController _anim;
+  // 一段文字的实际测量宽度。
+  double _textWidth = 0;
+  // 一周期移动的总距离 = 文字宽 + 空隙。
   double _cycle = 0;
-  // 是否确实需要滚动（文字超出可用宽度）。
-  bool _scrolling = false;
 
   @override
   void initState() {
     super.initState();
-    _ticker = createTicker(_onTick)..start();
+    _anim = AnimationController(vsync: this, duration: _duration)..repeat();
   }
 
   @override
   void dispose() {
-    _ticker.dispose();
-    _controller.dispose();
+    _anim.dispose();
     super.dispose();
-  }
-
-  void _onTick(Duration elapsed) {
-    if (!_scrolling || !_controller.hasClients) return;
-    // 位置随流逝时间线性增长，对一整段距离取模；回绕时内容无缝衔接。
-    final pos = (elapsed.inMicroseconds / 1e6) * _kSpeed;
-    _controller.jumpTo(pos % _cycle);
   }
 
   @override
@@ -72,7 +61,6 @@ class _MarqueeTextState extends State<MarqueeText>
 
         // 文字未超出宽度：静止显示单行省略。
         if (textWidth <= maxWidth) {
-          _scrolling = false;
           _cycle = 0;
           return Text(
             widget.text,
@@ -82,31 +70,41 @@ class _MarqueeTextState extends State<MarqueeText>
           );
         }
 
-        _scrolling = true;
+        _textWidth = textWidth;
         _cycle = textWidth + _kGap;
+
         return ClipRect(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            controller: _controller,
-            physics: const NeverScrollableScrollPhysics(),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  widget.text,
-                  style: style,
-                  maxLines: 1,
-                  softWrap: false,
+          child: AnimatedBuilder(
+            animation: _anim,
+            builder: (context, _) {
+              // 位移 = 动画值 * 整段距离；回绕时第二份恰好接上第一份。
+              return Transform.translate(
+                offset: Offset(-(_anim.value * _cycle), 0),
+                child: Stack(
+                  clipBehavior: Clip.hardEdge,
+                  children: [
+                    Positioned(
+                      left: 0,
+                      child: Text(
+                        widget.text,
+                        style: style,
+                        maxLines: 1,
+                        softWrap: false,
+                      ),
+                    ),
+                    Positioned(
+                      left: _textWidth + _kGap,
+                      child: Text(
+                        widget.text,
+                        style: style,
+                        maxLines: 1,
+                        softWrap: false,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 48),
-                Text(
-                  widget.text,
-                  style: style,
-                  maxLines: 1,
-                  softWrap: false,
-                ),
-              ],
-            ),
+              );
+            },
           ),
         );
       },
