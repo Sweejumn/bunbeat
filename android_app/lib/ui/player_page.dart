@@ -728,6 +728,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   ) {
     final bpm = _tapBpm;
     final bpmText = context.read<BpmDisplayController>();
+    final scheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -740,42 +741,33 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
           ],
         ),
         const SizedBox(height: 8),
-        // 第一行：BPM 显示框 + 设首拍（变色按钮，无对勾）+ 应用 + 复位
-        // 全部常驻，不随打拍动态增删文字，对齐 Web 版 row1。
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          crossAxisAlignment: WrapCrossAlignment.center,
+        // 第一行：BPM + 数字框（固定宽，容纳三位数+两位小数）… 靠右 应用(n/8)
+        Row(
           children: [
-            // BPM 显示框：有结果显示数值，无则「自动」
+            Text('BPM', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(width: 10),
+            // 固定宽度数字框：数字短也不跳动，预留 999.99 的宽度
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              width: 108,
+              height: 44,
+              alignment: Alignment.center,
               decoration: BoxDecoration(
-                border: Border.all(
-                  color: Theme.of(context).colorScheme.outline,
-                ),
+                border: Border.all(color: scheme.outline, width: 1.2),
                 borderRadius: BorderRadius.circular(8),
+                color: scheme.surfaceContainerHighest,
               ),
               child: Text(
-                bpm != null ? '${bpmText.format(bpm)} BPM' : '自动',
+                bpm != null ? bpmText.format(bpm) : '—',
                 style: TextStyle(
-                  color: bpm != null
-                      ? Theme.of(context).colorScheme.primary
-                      : Colors.grey,
-                  fontWeight: FontWeight.w600,
+                  fontSize: 22,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                  color: bpm != null ? scheme.primary : scheme.outline,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
             ),
-            // 设首拍：开启变主题色（不再用 chip 对勾）
-            _toggleButton(
-              context,
-              label: '设首拍',
-              title: '开启后每次点按都会把首拍对齐到点击位置，适合首拍不在 0 秒的歌曲',
-              active: _tapSetFirst,
-              onTap: () => setState(() => _tapSetFirst = !_tapSetFirst),
-            ),
-            // 应用到节拍器（对应 Web 「设置」按钮，需先算出 BPM 才能点）
+            const Spacer(),
+            // 应用(n/8)：n 为已点次数，需先算出 BPM 才能应用
             FilledButton(
               onPressed: bpm == null
                   ? null
@@ -787,22 +779,32 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                       }
                       setState(() {});
                     },
-              child: const Text('应用'),
+              child: Text('应用(${_tapMediaSec.length}/8)'),
             ),
-            TextButton(
+          ],
+        ),
+        const SizedBox(height: 8),
+        // 第二行：复位（左）… 靠右 设首拍 → 音效 → 点按打拍
+        Row(
+          children: [
+            TextButton.icon(
               onPressed: () => setState(() {
                 _tapMediaSec.clear();
                 _tapMarks.clear();
                 _tapBpm = null;
               }),
-              child: const Text('复位'),
+              icon: const Icon(Icons.refresh),
+              label: const Text('复位'),
             ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        // 第二行：左边音效开关，右边点按打拍按钮
-        Row(
-          children: [
+            const Spacer(),
+            _toggleButton(
+              context,
+              label: '设首拍',
+              title: '开启后每次点按都会把首拍对齐到点击位置，适合首拍不在 0 秒的歌曲',
+              active: _tapSetFirst,
+              onTap: () => setState(() => _tapSetFirst = !_tapSetFirst),
+            ),
+            const SizedBox(width: 8),
             _toggleButton(
               context,
               label: _tapSoundOn ? '音效 开' : '音效 关',
@@ -813,12 +815,8 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                 _savePref(_prefTapSound, _tapSoundOn);
               },
             ),
-            const Spacer(),
-            FilledButton.tonalIcon(
-              onPressed: () => _onTap(met, player, targetBpm),
-              icon: const Icon(Icons.touch_app),
-              label: const Text('点按打拍'),
-            ),
+            const SizedBox(width: 8),
+            _TapPulseButton(onTap: () => _onTap(met, player, targetBpm)),
           ],
         ),
       ],
@@ -1214,6 +1212,88 @@ class _PlaylistTile extends StatelessWidget {
         ],
       ),
       dense: true,
+    );
+  }
+}
+
+/// 点按打拍按钮：每次点击播放一次「脉冲闪一下」的视觉效果，
+/// 让用户能明确感知到每一次打拍都被记录了。
+class _TapPulseButton extends StatefulWidget {
+  final VoidCallback onTap;
+  const _TapPulseButton({required this.onTap});
+
+  @override
+  State<_TapPulseButton> createState() => _TapPulseButtonState();
+}
+
+class _TapPulseButtonState extends State<_TapPulseButton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 240),
+  );
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  void _handleTap() {
+    widget.onTap();
+    _c.forward(from: 0);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onTap: _handleTap,
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (context, child) {
+          final t = _c.value;
+          // 中间(t=0.5)最亮，两端熄灭 → 每点一下闪一次光晕
+          final flash = (t - 0.5).abs() * 2; // 0→1→0
+          final glow = (1 - flash).clamp(0.0, 1.0) * 0.5;
+          // 按下前 1/4 略微缩小，之后回弹放大，形成实感
+          final scale = t < 0.25 ? 0.94 + 0.24 * (t / 0.25) : 1.18 - 0.18 * ((t - 0.25) / 0.75);
+          return Transform.scale(
+            scale: scale,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              decoration: BoxDecoration(
+                color: scheme.primaryContainer,
+                borderRadius: BorderRadius.circular(22),
+                boxShadow: glow > 0
+                    ? [
+                        BoxShadow(
+                          color: scheme.primary.withValues(alpha: glow),
+                          blurRadius: 16 + 20 * glow,
+                          spreadRadius: 2 + 6 * glow,
+                        ),
+                      ]
+                    : null,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.touch_app, color: scheme.onPrimaryContainer),
+                  const SizedBox(width: 6),
+                  Text(
+                    '点按打拍',
+                    style: TextStyle(
+                      color: scheme.onPrimaryContainer,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 }
