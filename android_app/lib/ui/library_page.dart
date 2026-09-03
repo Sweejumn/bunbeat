@@ -333,10 +333,12 @@ class _LibraryPageState extends State<LibraryPage> {
 
     final action = await showModalBottomSheet<String>(
       context: context,
+      // 面板高度不足时内容可滚动，避免底部选项（如「手动修改」）被遮挡无法点选。
       builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
             ListTile(
               leading: const Icon(Icons.music_note),
               title: MarqueeText(song.title),
@@ -371,12 +373,6 @@ class _LibraryPageState extends State<LibraryPage> {
                 onTap: () => Navigator.pop(ctx, 'x2'),
               ),
               ListTile(
-                leading: const Icon(Icons.horizontal_rule),
-                title: const Text('BPM ÷2'),
-                subtitle: const Text('把 BPM 除以二'),
-                onTap: () => Navigator.pop(ctx, 'div2'),
-              ),
-              ListTile(
                 leading: const Icon(Icons.edit),
                 title: const Text('手动修改'),
                 subtitle: const Text('直接输入一个数值作为 BPM'),
@@ -386,6 +382,7 @@ class _LibraryPageState extends State<LibraryPage> {
           ],
         ),
       ),
+    ),
     );
 
     if (action == null || !mounted) return;
@@ -406,9 +403,6 @@ class _LibraryPageState extends State<LibraryPage> {
         break;
       case 'x2':
         lib.setManualBpm(song, ((song.originalBpm ?? 0) * 2).clamp(20, 400));
-        break;
-      case 'div2':
-        lib.setManualBpm(song, ((song.originalBpm ?? 0) / 2).clamp(20, 400));
         break;
       case 'manual':
         await _editBpm(context, lib, song);
