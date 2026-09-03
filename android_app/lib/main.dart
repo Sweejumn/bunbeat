@@ -79,6 +79,8 @@ class _StartupGateState extends State<_StartupGate> {
       _restored = true;
       // 等首帧画完再恢复，避免启动时白屏等待即时的缓存扫描。
       WidgetsBinding.instance.addPostFrameCallback((_) {
+        // 先恢复上次的目标 BPM，再恢复文件夹等。
+        context.read<LibraryService>().loadTargetBpm();
         context.read<LibraryService>().restoreLastFolder();
         context.read<ThemeController>().load();
         context.read<BpmDisplayController>().load();

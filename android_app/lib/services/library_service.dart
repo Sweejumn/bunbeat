@@ -24,9 +24,37 @@ class LibraryService extends ChangeNotifier {
 
   /// 缓存的歌曲 id（路径 hash），用于缓存文件名与播放列表键。
   static const _kLastFolder = 'last_folder';
+  static const _kTargetBpm = 'target_bpm';
 
-  /// 当前选中的目标 BPM（推荐与入队用）。
-  double targetBpm = 155;
+  /// 当前选中的目标 BPM（推荐与入队用）。设置时持久化，退出后下次启动恢复。
+  double _targetBpm = 155;
+  double get targetBpm => _targetBpm;
+  set targetBpm(double v) {
+    if (_targetBpm == v) return;
+    _targetBpm = v;
+    notifyListeners();
+    _persistTargetBpm(v);
+  }
+
+  Future<void> _persistTargetBpm(double v) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(_kTargetBpm, v);
+    } catch (_) {}
+  }
+
+  /// 启动时恢复上次保存的目标 BPM（未保存过则保持默认）。
+  Future<void> loadTargetBpm() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final v = prefs.getDouble(_kTargetBpm);
+      if (v != null && v > 0) {
+        // 直接写私有字段避免 setter 触发多余的通知/写盘。
+        _targetBpm = v;
+        notifyListeners();
+      }
+    } catch (_) {}
+  }
 
   List<Song> get songs => List.unmodifiable(_songs);
   bool get isAnalyzing => _analyzingTotal > 0 && _analyzingDone < _analyzingTotal;
