@@ -47,6 +47,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   late double _phaseNudgePct; // 缓存默认 0；持久化（-50..+50）
   late bool _metEnabled; // 缓存默认 true（对齐 Web 默认开启）；持久化
   late bool _tapSoundOn; // 缓存默认 false；持久化（对齐 Web runbpm.tapSound 默认关）
+  late int _metSoundIndex; // 节拍器音色索引；缓存默认 0（第一个）；持久化
   // 打拍校准：每次点击记录墙钟时间与媒体位置；>=8 次后取中位间隔算 BPM。
   final List<double> _tapMediaSec = [];
   int _lastTapAtMs = 0; // 上次打拍的墙钟毫秒，用于 >2s 间隔时重置本批（对齐 Web）
@@ -68,6 +69,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   static const String _prefTapSound = 'runbpm.tapSound';
   static const String _prefMusicVolume = 'runbpm.musicVolume';
   static const String _prefMetVolume = 'runbpm.metVolume';
+  static const String _prefMetSound = 'runbpm.metSound';
 
   @override
   void initState() {
@@ -78,6 +80,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     _phaseNudgePct = 0.0;
     _metEnabled = true;
     _tapSoundOn = false;
+    _metSoundIndex = 0;
     _loadPrefs();
     final player = context.read<AudioPlayerService>().player;
     _posSub = player.positionStream.listen((_) {
@@ -126,13 +129,18 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       if (mode != null) _activeBeatMode = mode;
       _metEnabled = prefs.getBool(_prefMetOn) ?? true;
       _tapSoundOn = prefs.getBool(_prefTapSound) ?? false;
+      _metSoundIndex =
+          (prefs.getInt(_prefMetSound) ?? 0).clamp(0, kMetronomeSounds.length - 1);
       _musicVolume = (prefs.getDouble(_prefMusicVolume) ?? 1.0).clamp(0.0, 1.0);
       _metVolume = (prefs.getDouble(_prefMetVolume) ?? 0.5).clamp(0.0, 1.0);
     });
-    // 把恢复的音量应用到播放器/节拍器。
+    // 把恢复的音量/音色应用到播放器/节拍器。
     final player = context.read<AudioPlayerService>().player;
     player.setVolume(_musicVolume);
-    context.read<Metronome>().setVolume(_metVolume);
+    final met = context.read<Metronome>();
+    met.setVolume(_metVolume);
+    // 恢复上次选中的音色（无副作用：索引相同则 setSound 内部直接返回）。
+    met.setSound(_metSoundIndex);
   }
 
   Future<void> _savePref(String key, Object value) async {
@@ -167,6 +175,7 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       await prefs.setBool(_prefMetOn, _metEnabled);
       await prefs.setBool(_prefTapSound, _tapSoundOn);
       await prefs.setString(_prefBeatMode, _activeBeatMode.name);
+      await prefs.setInt(_prefMetSound, _metSoundIndex);
     });
     return _saveChain;
   }
@@ -927,7 +936,46 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
                   },
                 ),
                 const Spacer(),
-                Text('${context.read<BpmDisplayController>().format(targetBpm)} BPM'),
+                // 节拍器音色选择：开关右侧不再显示 BPM，改为选音效（默认第一个，持久化）。
+                PopupMenuButton<int>(
+                  initialValue: _metSoundIndex,
+                  tooltip: '选择节拍器音效',
+                  onSelected: (idx) {
+                    setState(() => _metSoundIndex = idx);
+                    _savePref(_prefMetSound, idx);
+                    met.setSound(idx);
+                  },
+                  itemBuilder: (ctx) => [
+                    for (var i = 0; i < kMetronomeSounds.length; i++)
+                      PopupMenuItem<int>(
+                        value: i,
+                        child: Row(
+                          children: [
+                            Icon(
+                              i == _metSoundIndex
+                                  ? Icons.radio_button_checked
+                                  : Icons.radio_button_off,
+                              size: 18,
+                              color: i == _metSoundIndex
+                                  ? Theme.of(ctx).colorScheme.primary
+                                  : null,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(kMetronomeSounds[i].name),
+                          ],
+                        ),
+                      ),
+                  ],
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.audiotrack, size: 18),
+                      const SizedBox(width: 4),
+                      Text(kMetronomeSounds[_metSoundIndex].name),
+                      const Icon(Icons.arrow_drop_down),
+                    ],
+                  ),
+                ),
               ],
             ),
             // 音乐 + 拍子音量（对齐 Web：两个滑杆同一行各占一半）

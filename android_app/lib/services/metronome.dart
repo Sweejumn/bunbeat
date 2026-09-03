@@ -16,6 +16,32 @@ import 'package:just_audio/just_audio.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+/// 一种节拍器音色参数（程序化生成短促 WAV）。
+class MetronomeSound {
+  final String name; // 显示名（中文）
+  final double freq; // 基频 Hz
+  final double dur; // 时长秒
+  final double decay; // 指数衰减系数（越大衰减越快、越短促）
+  final double amp; // 幅度 0..1
+  final bool square; // true=方波 false=正弦
+  const MetronomeSound({
+    required this.name,
+    required this.freq,
+    required this.dur,
+    required this.decay,
+    required this.amp,
+    this.square = false,
+  });
+}
+
+/// 可选节拍器音色列表（约定：第一个为默认项）。
+const List<MetronomeSound> kMetronomeSounds = [
+  MetronomeSound(name: '木鱼', freq: 2000, dur: 0.06, decay: 18, amp: 0.8),
+  MetronomeSound(name: '滴', freq: 3000, dur: 0.05, decay: 15, amp: 0.7),
+  MetronomeSound(name: '嗒', freq: 600, dur: 0.09, decay: 12, amp: 0.9),
+  MetronomeSound(name: '哔', freq: 1000, dur: 0.07, decay: 14, amp: 0.75, square: true),
+];
+
 class Metronome {
   final List<AudioPlayer> _pool = [];
 
@@ -43,6 +69,9 @@ class Metronome {
   double _volume = 0.5;
   String? _clickPath;
 
+  /// 当前选中的节拍器音色索引（对应 [kMetronomeSounds]）。
+  int _soundIndex = 0;
+
   /// 打拍校准的即时「滴答」音（G6 1568Hz），独立于节拍器声音池，
   /// 即使节拍器关闭也能响（对应 Web 的 playTapClick）。
   String? _tapPath;
@@ -56,12 +85,40 @@ class Metronome {
     // 只要 _pool 还空着，再次调用就会重试 _initPool()（内部有防重复守卫）。
     if (_clickPath == null) {
       final dir = await getTemporaryDirectory();
-      _clickPath = p.join(dir.path, 'runbpm_tick.wav');
+      _clickPath = p.join(dir.path, 'runbpm_tick_$_soundIndex.wav');
       if (!await File(_clickPath!).exists()) {
-        await _writeClickWav(_clickPath!);
+        await _writeClickWav(_clickPath!, _soundIndex);
       }
     }
     await _initPool();
+  }
+
+  /// 获取当前音色索引。
+  int get soundIndex => _soundIndex;
+
+  /// 切换节拍器音色：重建当前音色的 WAV 与播放器池。
+  /// 仅当索引变化才真正重建，避免无谓地重新加载声音。
+  Future<void> setSound(int index) async {
+    final clamped = index.clamp(0, kMetronomeSounds.length - 1);
+    if (clamped == _soundIndex) return;
+    _soundIndex = clamped;
+
+    // 释放旧池，重新生成新音色的 WAV 并重建池。
+    for (final pl in _pool) {
+      pl.dispose();
+    }
+    _pool.clear();
+    _poolLastUsedMs.clear();
+
+    try {
+      final dir = await getTemporaryDirectory();
+      _clickPath = p.join(dir.path, 'runbpm_tick_$_soundIndex.wav');
+      if (!await File(_clickPath!).exists()) {
+        await _writeClickWav(_clickPath!, _soundIndex);
+      }
+      await _initPool();
+      if (_enabled) _restart();
+    } catch (_) {}
   }
 
   /// 初始化并播放一次「打拍滴答」（G6 1568Hz）。
@@ -291,18 +348,19 @@ class Metronome {
     } catch (_) {}
   }
 
-  /// 生成一个 60ms 的短促「嗒」声写为单声道 16-bit WAV。
-  Future<void> _writeClickWav(String path) async {
+  /// 根据 [kMetronomeSounds][index] 生成一个 短促「嗒」声写为单声道 16-bit WAV。
+  Future<void> _writeClickWav(String path, int index) async {
+    final preset = kMetronomeSounds[index.clamp(0, kMetronomeSounds.length - 1)];
     final sr = 44100;
-    final dur = 0.06;
-    final n = (sr * dur).round();
+    final n = (sr * preset.dur).round();
     final bytes = ByteData(n * 2);
     for (int i = 0; i < n; i++) {
       final t = i / sr;
-      // 指数衰减的正弦（2kHz），听起来像短促的嗒声
-      final env = math.exp(-18 * t);
-      final v = math.sin(2 * math.pi * 2000 * t) * env;
-      final s16 = (v * 0.8 * 32767).round().clamp(-32768, 32767);
+      final env = math.exp(-preset.decay * t);
+      final frac = math.sin(2 * math.pi * preset.freq * t) >= 0 ? 1.0 : -1.0;
+      final wave = preset.square ? frac : math.sin(2 * math.pi * preset.freq * t);
+      final v = wave * env * preset.amp;
+      final s16 = (v * 32767).round().clamp(-32768, 32767);
       bytes.setInt16(i * 2, s16, Endian.little);
     }
     await _writeWavFile(path, bytes, n, sr);
