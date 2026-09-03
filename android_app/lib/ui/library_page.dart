@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../models/song.dart';
 import '../services/audio_reader.dart';
 import '../services/library_service.dart';
+import 'marquee_text.dart';
 
 class LibraryPage extends StatelessWidget {
   const LibraryPage({super.key});
@@ -156,7 +157,7 @@ class _SongTile extends StatelessWidget {
               : const Icon(Icons.music_note, color: Colors.grey),
         ),
       ),
-      title: Text(song.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+      title: MarqueeText(song.title),
       subtitle: Text(_statusText(), style: TextStyle(color: color)),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,

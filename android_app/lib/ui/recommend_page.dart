@@ -7,6 +7,7 @@ import '../models/song.dart';
 import '../services/audio_player_service.dart';
 import '../services/library_service.dart';
 import '../services/queue_service.dart';
+import 'marquee_text.dart';
 import 'mode_picker.dart';
 import 'tempo_grade.dart';
 
@@ -204,11 +205,7 @@ class _RecTile extends StatelessWidget {
               : const Icon(Icons.music_note, color: Colors.grey),
         ),
       ),
-      title: Text(
-        s.title,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
+      title: MarqueeText(s.title),
       subtitle: Row(
         children: [
           // 分级箭头/符号（绿= · 绿/琥珀/红↑↓ · 红✕），颜色与 Web 图例一致。
