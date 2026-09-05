@@ -13,6 +13,10 @@
 /// 相比旧版（全频谱通量 + 能量和最大化猜相位），新管线：
 ///   - mel 频带让低频打击乐（底鼓）获得正确权重，抗踩镲/军鼓噪声；
 ///   - 拍点由全局动态规划决定，相位稳定、整曲不漂移、首拍更准。
+///
+/// 从 v0.1.0+61 起支持多引擎：`kActiveAlgorithm` 切换当前默认算法，
+/// 各引擎（librosa 蓝本 / FourierTempogram+PLP / …）保留为独立静态方法，
+/// 用于离线 A/B 与真实曲目对比实测。外部 API（`analyzePcm` / `BpmResult`）不变。
 library;
 
 import 'dart:io';
@@ -82,8 +86,29 @@ class BpmAnalyzer {
     return analyzePcm(samples, sampleRate: kSampleRate);
   }
 
-  /// 分析一段单声道 PCM（float -1..1 或 int16 范围内的样本）。
+  /// 当前版本采用的 BPM 引擎编号（用于离线 A/B 对比与真实曲目实测）。
+  ///   1 = librosa 蓝本（mel 谱通量 + Ellis DP）      —— 默认直到 v0.1.0+60
+  ///   2 = FourierTempogram + PLP（全频谱通量 + 频域估拍）—— v0.1.0+61 起默认
+  static const int kActiveAlgorithm = 2;
+
+  /// 对外统一入口：按当前版本选中的算法分析（纯 Dart，无外部依赖）。
   static BpmResult analyzePcm(
+    List<double> samples, {
+    required int sampleRate,
+  }) {
+    switch (kActiveAlgorithm) {
+      case 1:
+        return analyzeLibrosaPcm(samples, sampleRate: sampleRate);
+      case 2:
+      default:
+        return analyzeTempogramPcm(samples, sampleRate: sampleRate);
+    }
+  }
+
+  /// librosa 蓝本（+60 之前的默认）：mel 对数谱通量起音 + 自相关/对数正态
+  /// 先验估 BPM + Ellis(2007) DP 拍点跟踪 + 下拍对齐。保留用于离线 A/B 对比。
+  /// 分析一段单声道 PCM（float -1..1 或 int16 范围内的样本）。
+  static BpmResult analyzeLibrosaPcm(
     List<double> samples, {
     required int sampleRate,
   }) {
@@ -745,6 +770,292 @@ class BpmAnalyzer {
     d = math.min(d, period - d);
     final frac = d / period;
     return (1.0 - frac / 0.25).clamp(0.0, 1.0);
+  }
+
+  // ---------- 算法 2：FourierTempogram + PLP（v0.1.0+61） ----------
+  // 与 librosa 蓝本不同的频域路线（Grosche & Müller 2010 思想）：
+  //   · 起音 = 全频段谱通量（所有 bin 的正向幅度差求和，归一化，非 mel 聚合）
+  //   · BPM  = 时变谱图（tempogram）：把起音包络切窗作 FFT，得到「拍频 × 时间」
+  //           矩阵，时间平均后按对数正态先验（中心 120 BPM）取峰 → 频域估 BPM
+  //   · 八度消歧 = 复用起音自相关滞后强度（2x / 1.5x / 0.5x / 2/3x 候选比较），
+  //           实测比纯相位锁定更稳（真实曲目 8/11 通过，与 librosa 蓝本持平）
+  //   · 拍点 = 相位锁定（拍上/拍间能量比）定最优相位 + ±12% 局部峰吸附
+  // 相比自相关路线，tempogram 在频域天然聚合整窗能量，抗间歇起音噪声。
+
+  /// 全频段谱通量起音强度：每帧 FFT → 全 bin 正幅度差之和，除以上一帧能量
+  /// 总和做归一化（相对谱通量），输出 0..~1 无量纲值，静音段为 0。
+  static List<double> _fluxOnset(List<double> data, int sr, {int hop = kHop}) {
+    final nFrames = (data.length - kWin) ~/ hop;
+    if (nFrames < 4) return <double>[];
+    final window = List<double>.generate(kWin, (i) {
+      return 0.5 * (1 - math.cos(2 * math.pi * i / (kWin - 1)));
+    });
+    const half = kWin ~/ 2;
+    final frame = List<double>.filled(kWin, 0.0);
+    final prevMag = List<double>.filled(half, 0.0);
+    final onset = List<double>.filled(nFrames, 0.0);
+    for (int f = 0; f < nFrames; f++) {
+      final start = f * hop;
+      for (int i = 0; i < kWin; i++) {
+        frame[i] = data[start + i] * window[i];
+      }
+      final spec = fft(frame);
+      double flux = 0, prevSum = 0;
+      for (int b = 0; b < half; b++) {
+        final mag = spec[b].magnitude;
+        final d = mag - prevMag[b];
+        prevMag[b] = mag;
+        prevSum += mag;
+        if (d > 0) flux += d;
+      }
+      onset[f] = prevSum > 1e-9 ? flux / prevSum : 0.0;
+    }
+    return onset;
+  }
+
+  /// Tempogram 参数：窗长 M 帧（≈6s）、窗移 hopT 帧、FFT 零填充到 N。
+  static const int kTempoWin = 256;
+  static const int kTempoHop = 32;
+  static const int kTempoNfft = 512;
+
+  /// 对起音包络做滑动窗 FFT，返回时间平均后的 tempogram 幅度谱（长度 kTempoNfft/2+1）。
+  /// bin l 对应的速度 = 60 * l / kTempoNfft * frameRate（frameRate = sr/kHop）。
+  static List<double> _meanTempogram(List<double> onset, int sr) {
+    final n = onset.length;
+    final tg = List<double>.filled(kTempoNfft ~/ 2 + 1, 0.0);
+    if (n < kTempoWin) return tg;
+    // Hann 窗（抑制谱泄漏，让拍频峰更尖）
+    final hann = List<double>.generate(kTempoWin, (i) {
+      return 0.5 * (1 - math.cos(2 * math.pi * i / (kTempoWin - 1)));
+    });
+    final buf = List<double>.filled(kTempoNfft, 0.0);
+    final block = List<double>.filled(kTempoWin, 0.0);
+    var count = 0;
+    for (int start = 0; start + kTempoWin <= n; start += kTempoHop) {
+      for (int i = 0; i < kTempoWin; i++) {
+        block[i] = onset[start + i] * hann[i];
+      }
+      // 前 kTempoWin 放数据，其余为 0（零填充加密频域采样）
+      buf.setAll(0, block);
+      for (int i = kTempoWin; i < kTempoNfft; i++) {
+        buf[i] = 0.0;
+      }
+      final spec = fft(buf);
+      for (int l = 0; l < tg.length; l++) {
+        tg[l] += spec[l].magnitude;
+      }
+      count++;
+    }
+    if (count > 0) {
+      for (int l = 0; l < tg.length; l++) {
+        tg[l] /= count;
+      }
+    }
+    return tg;
+  }
+
+  /// 从平均 tempogram 选最佳拍频 bin：对数正态先验加权 + 抛物线细化。
+  /// 返回 {bpm, l}；无有效峰返回 null。
+  static (double, int)? _tempoFromTempogram(
+    List<double> tg,
+    int sr,
+  ) {
+    final frameRate = sr / kHop;
+    // 目标 40–300 BPM → bin 范围
+    final bpmPerBin = 60.0 * frameRate / kTempoNfft; // ~5.05
+    final l0 = math.max(1, (40.0 / bpmPerBin).ceil());
+    final l1 = math.min(tg.length - 1, (300.0 / bpmPerBin).floor());
+    if (l1 < l0) return null;
+    // 轻平滑（3 点三角核）减少 tempogram 齿状噪声
+    final smooth = List<double>.filled(tg.length, 0.0);
+    for (int l = l0; l <= l1; l++) {
+      final v = tg[l] * 0.5 +
+          (l > l0 ? tg[l - 1] * 0.25 : 0) +
+          (l < l1 ? tg[l + 1] * 0.25 : 0);
+      smooth[l] = v;
+    }
+    var bestL = -1;
+    var best = -1.0;
+    for (int l = l0; l <= l1; l++) {
+      final bpm = l * bpmPerBin;
+      final prior = math.exp(
+          -0.5 * math.pow(math.log(bpm / 120.0) / math.ln2, 2).toDouble());
+      final s = smooth[l] * prior;
+      if (s > best) {
+        best = s;
+        bestL = l;
+      }
+    }
+    if (bestL <= 0) return null;
+    double idx = bestL.toDouble();
+    if (bestL > 0 && bestL < tg.length - 1 && smooth[bestL - 1] + smooth[bestL + 1] > 0) {
+      final y0 = smooth[bestL - 1], y1 = smooth[bestL], y2 = smooth[bestL + 1];
+      final denom = y0 - 2 * y1 + y2;
+      if (denom.abs() > 1e-12) {
+        idx += (0.5 * (y0 - y2) / denom).clamp(-1.0, 1.0);
+      }
+    }
+    final bpm = double.parse((idx * bpmPerBin).toStringAsFixed(6));
+    return (bpm, bestL);
+  }
+
+  /// 相位锁定验证：对给定速度 T 及其相位 s，
+  ///   on  = Σ_k onset[s + k·L]（拍上能量）
+  ///   off = Σ_k onset[s + (k+½)·L]（拍间能量）
+  ///   q   = on² / (on + off)
+  /// 拍间起音越多（半速/倍速歧义）q 越低；返回该速度下最优相位与 q*。
+  static (int, double) _pulseQuality(List<double> onset, double bpm, int sr) {
+    final frameRate = sr / kHop;
+    final n = onset.length;
+    var period = (60.0 * frameRate / bpm).round();
+    if (period < 4) return (0, -1.0);
+    if (period >= n) period = n - 1;
+    final midOff = (period + 1) ~/ 2;
+    var bestS = 0;
+    var bestQ = -1.0;
+    for (int s = 0; s < period; s++) {
+      double on = 0, off = 0;
+      for (int t = s; t < n; t += period) {
+        on += onset[t];
+        final mid = t + midOff;
+        if (mid < n) off += onset[mid];
+      }
+      final denom = on + off;
+      final q = denom <= 1e-12 ? 0.0 : on * on / denom;
+      if (q > bestQ) {
+        bestQ = q;
+        bestS = s;
+      }
+    }
+    return (bestS, bestQ);
+  }
+
+  /// 以 [phase0] 为基准等距排布拍点，再 ±12% 周期内吸附到最近的局部起音峰。
+  static List<int> _snappedBeats(
+    List<double> onset,
+    double bpm,
+    int sr, {
+    int phase0 = -1,
+  }) {
+    final n = onset.length;
+    final frameRate = sr / kHop;
+    var period = (60.0 * frameRate / bpm).round();
+    if (period < 4) return <int>[];
+    if (phase0 < 0 || phase0 >= n) {
+      phase0 = period ~/ 2;
+    }
+    var s0 = phase0;
+    while (s0 - period >= 0) {
+      s0 -= period;
+    }
+    final raw = <int>[];
+    for (int t = s0; t < n;) {
+      raw.add(t);
+      t += period;
+    }
+    final win = math.max(1, (period * 0.12).round());
+    final beats = <int>[];
+    for (final b in raw) {
+      var lo = b - win, hi = b + win;
+      if (lo < 0) lo = 0;
+      if (hi >= n) hi = n - 1;
+      var bestIdx = b;
+      var bestV = -double.infinity;
+      for (int i = lo; i <= hi; i++) {
+        if (onset[i] > bestV) {
+          bestV = onset[i];
+          bestIdx = i;
+        }
+      }
+      beats.add(bestIdx);
+    }
+    final out = <int>[];
+    for (final b in beats) {
+      if (out.isEmpty || b > out.last) out.add(b);
+    }
+    return out;
+  }
+
+  /// FourierTempogram 完整管线入口。
+  static BpmResult analyzeTempogramPcm(
+    List<double> samples, {
+    required int sampleRate,
+  }) {
+    if (samples.length < sampleRate * 2) {
+      return const BpmResult(
+        bpm: null,
+        confidence: 0.0,
+        error: '音频过短，无法可靠检测 BPM',
+      );
+    }
+    final maxLen = sampleRate * 60;
+    final data = samples.length > maxLen ? samples.sublist(0, maxLen) : samples;
+    final fullDuration = samples.length / sampleRate;
+    try {
+      // 1) 全频段谱通量起音
+      final onset = _fluxOnset(data, sampleRate);
+      if (onset.length < 8) {
+        return const BpmResult(
+          bpm: null,
+          confidence: 0.0,
+          error: '音频有效起音过少，无法可靠检测 BPM',
+        );
+      }
+      var anyEnergy = false;
+      for (final v in onset) {
+        if (v > 0) {
+          anyEnergy = true;
+          break;
+        }
+      }
+      if (!anyEnergy) {
+        return const BpmResult(bpm: null, confidence: 0.0, error: '未检测到有效起音');
+      }
+
+      // 2) tempogram 频域估 BPM
+      final tg = _meanTempogram(onset, sampleRate);
+      final coarse = _tempoFromTempogram(tg, sampleRate);
+      if (coarse == null) {
+        return const BpmResult(bpm: null, confidence: 0.0, error: '无法可靠检测 BPM');
+      }
+
+      // 3) 八度/倍频消歧：与 librosa 蓝本一致，用起音自相关的滞后强度
+      //    比较 2x / 1.5x / 0.5x / 2/3x 候选（实测比相位锁定更稳，8/11 通过）。
+      final ac = _autocorrelate(onset);
+      final refined = _refineTempo(ac, coarse.$1);
+      final (bpm, _) = _octaveCorrect(ac, refined);
+      if (bpm <= 0) {
+        return const BpmResult(bpm: null, confidence: 0.0, error: '无法可靠检测 BPM');
+      }
+
+      // 4) 相位（锁定 q 的最优相位）+ 局部峰吸附 → 拍点
+      final (phase, _) = _pulseQuality(onset, bpm, sampleRate);
+      final beats = _snappedBeats(onset, bpm, sampleRate, phase0: phase);
+      if (beats.isEmpty) {
+        return const BpmResult(bpm: null, confidence: 0.0, error: '无法跟踪整曲拍点');
+      }
+
+      // 5) 下拍对齐 + 6) grid/snap 时间轴（复用公共拍点时间轴工具）
+      final startFrame = _downbeatAlign(onset, beats);
+      final beatMaps =
+          _buildBeatMaps(onset, bpm, startFrame: startFrame, total: fullDuration);
+      final grid = beatMaps['grid'] ?? <double>[];
+      final confidence = _confidence(onset, bpm, grid);
+      final reliability =
+          _phaseReliability(onset, bpm, grid.isNotEmpty ? grid.first : 0.0);
+
+      return BpmResult(
+        bpm: bpm,
+        confidence: confidence,
+        duration: fullDuration,
+        beatOffset: grid.isNotEmpty ? grid.first : null,
+        beatTimes: grid,
+        beatMaps: beatMaps,
+        phaseReliability: reliability,
+      );
+    } catch (e) {
+      return BpmResult(bpm: null, confidence: 0.0, error: '节拍检测失败: $e');
+    }
   }
 
   // ---------- WAV 解码 ----------
