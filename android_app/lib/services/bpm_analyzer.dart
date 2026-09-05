@@ -15,7 +15,7 @@
 ///   - 拍点由全局动态规划决定，相位稳定、整曲不漂移、首拍更准。
 ///
 /// 从 v0.1.0+61 起支持多引擎：`kActiveAlgorithm` 切换当前默认算法，
-/// 各引擎（librosa 蓝本 / FourierTempogram+PLP / …）保留为独立静态方法，
+/// 各引擎（librosa 蓝本 / FourierTempogram+PLP / 自相关+峰投票 / …）保留为独立静态方法，
 /// 用于离线 A/B 与真实曲目对比实测。外部 API（`analyzePcm` / `BpmResult`）不变。
 library;
 
@@ -87,9 +87,10 @@ class BpmAnalyzer {
   }
 
   /// 当前版本采用的 BPM 引擎编号（用于离线 A/B 对比与真实曲目实测）。
-  ///   1 = librosa 蓝本（mel 谱通量 + Ellis DP）      —— 默认直到 v0.1.0+60
+  ///   1 = librosa 蓝本（mel 谱通量 + Ellis DP）        —— 默认直到 v0.1.0+60
   ///   2 = FourierTempogram + PLP（全频谱通量 + 频域估拍）—— v0.1.0+61 起默认
-  static const int kActiveAlgorithm = 2;
+  ///   3 = 自相关估拍 + 起音峰圆周直方图定相位（统计相位，无 DP）—— v0.1.0+62 起默认
+  static const int kActiveAlgorithm = 3;
 
   /// 对外统一入口：按当前版本选中的算法分析（纯 Dart，无外部依赖）。
   static BpmResult analyzePcm(
@@ -100,8 +101,10 @@ class BpmAnalyzer {
       case 1:
         return analyzeLibrosaPcm(samples, sampleRate: sampleRate);
       case 2:
-      default:
         return analyzeTempogramPcm(samples, sampleRate: sampleRate);
+      case 3:
+      default:
+        return analyzePeakClusterPcm(samples, sampleRate: sampleRate);
     }
   }
 
@@ -1030,6 +1033,160 @@ class BpmAnalyzer {
 
       // 4) 相位（锁定 q 的最优相位）+ 局部峰吸附 → 拍点
       final (phase, _) = _pulseQuality(onset, bpm, sampleRate);
+      final beats = _snappedBeats(onset, bpm, sampleRate, phase0: phase);
+      if (beats.isEmpty) {
+        return const BpmResult(bpm: null, confidence: 0.0, error: '无法跟踪整曲拍点');
+      }
+
+      // 5) 下拍对齐 + 6) grid/snap 时间轴（复用公共拍点时间轴工具）
+      final startFrame = _downbeatAlign(onset, beats);
+      final beatMaps =
+          _buildBeatMaps(onset, bpm, startFrame: startFrame, total: fullDuration);
+      final grid = beatMaps['grid'] ?? <double>[];
+      final confidence = _confidence(onset, bpm, grid);
+      final reliability =
+          _phaseReliability(onset, bpm, grid.isNotEmpty ? grid.first : 0.0);
+
+      return BpmResult(
+        bpm: bpm,
+        confidence: confidence,
+        duration: fullDuration,
+        beatOffset: grid.isNotEmpty ? grid.first : null,
+        beatTimes: grid,
+        beatMaps: beatMaps,
+        phaseReliability: reliability,
+      );
+    } catch (e) {
+      return BpmResult(bpm: null, confidence: 0.0, error: '节拍检测失败: $e');
+    }
+  }
+
+  // ---------- 算法 3：自相关估拍 + 起音峰圆周直方图定相位（v0.1.0+62） ----------
+  // 与算法 2 的纯频域路线互补的「时域统计」路线：
+  //   · 起音 = 全频段谱通量（复用 _fluxOnset）
+  //   · BPM  = 对起音包络做 IFFT 自相关（复用 _autocorrelate）+ 对数正态先验
+  //           扫描 lag → 抛物线细化 → 自相关滞后强度做八度消歧
+  //   · 相位 = 统计的「起音峰圆周直方图」：把所有强起音峰取模一个节拍周期，
+  //           圆的哪个位置能量最集中（加权直方图 + 环形平滑），哪里就是第 1 拍。
+  //           不依赖 DP、不耗尽所有相位——直接由整曲起音的分布投票决定，抗间歇噪声。
+  //   · 拍点 = 组合网格 + ±12% 局部峰吸附（复用 _snappedBeats / _followOnsets）
+  // 相比算法 1（mel+DP）与算法 2（tempogram+相位锁定），相位判定是「统计投票」，
+  // 计算更省，对起音丢失/间歇段落更鲁棒。
+
+  /// 能量和最大化相位（回退用）：把拍点等距放在 s 处时，每拍 ±1/8 周期窗口内
+  /// 的局部最大起音强度之和最大，视为最优相位 s∈[0, period)。
+  static int _energyPhase(List<double> onset, int period) {
+    final n = onset.length;
+    final w = math.max(1, period ~/ 8);
+    var bestS = 0;
+    var bestE = -double.infinity;
+    for (int s = 0; s < period; s++) {
+      double e = 0;
+      for (int t = s; t < n; t += period) {
+        var lo = t - w;
+        if (lo < 0) lo = 0;
+        var hi = t + w;
+        if (hi >= n) hi = n - 1;
+        double m = -double.infinity;
+        for (int i = lo; i <= hi; i++) {
+          if (onset[i] > m) m = onset[i];
+        }
+        if (m.isFinite) e += m;
+      }
+      if (e > bestE) {
+        bestE = e;
+        bestS = s;
+      }
+    }
+    return bestS;
+  }
+
+  /// 起音峰圆周直方图定相位：取所有强度超过均值 0.6 的起音局部峰，
+  /// 按模一个节拍周期分桶（权重 = 峰强度），环形 3-点平滑后取能量最集中桶。
+  /// 返回该节拍周期的相位（帧）。峰过少时回退到能量和最大化。
+  static int _peakClusterPhase(List<double> onset, double bpm, int sr) {
+    final frameRate = sr / kHop;
+    final n = onset.length;
+    var period = (60.0 * frameRate / bpm).round();
+    if (period < 4) return 0;
+    if (period >= n) period = n - 1;
+    final mean = onset.reduce((a, b) => a + b) / n;
+    final thr = mean * 0.6;
+    final hist = List<double>.filled(period, 0.0);
+    var peakCount = 0;
+    for (int i = 2; i < n - 2; i++) {
+      if (onset[i] >= onset[i - 1] && onset[i] > onset[i + 1] && onset[i] > thr) {
+        hist[i % period] += onset[i];
+        peakCount++;
+      }
+    }
+    if (peakCount < 4) return _energyPhase(onset, period);
+    // 环形 3-点平滑（首尾相接）
+    final hs = List<double>.filled(period, 0.0);
+    for (int b = 0; b < period; b++) {
+      hs[b] = hist[b] * 0.5 +
+          hist[(b - 1 + period) % period] * 0.25 +
+          hist[(b + 1) % period] * 0.25;
+    }
+    var best = 0;
+    for (int b = 1; b < period; b++) {
+      if (hs[b] > hs[best]) best = b;
+    }
+    return best;
+  }
+
+  /// 算法 3 完整管线入口。
+  static BpmResult analyzePeakClusterPcm(
+    List<double> samples, {
+    required int sampleRate,
+  }) {
+    if (samples.length < sampleRate * 2) {
+      return const BpmResult(
+        bpm: null,
+        confidence: 0.0,
+        error: '音频过短，无法可靠检测 BPM',
+      );
+    }
+    final maxLen = sampleRate * 60;
+    final data = samples.length > maxLen ? samples.sublist(0, maxLen) : samples;
+    final fullDuration = samples.length / sampleRate;
+    try {
+      // 1) 全频段谱通量起音
+      final onset = _fluxOnset(data, sampleRate);
+      if (onset.length < 8) {
+        return const BpmResult(
+          bpm: null,
+          confidence: 0.0,
+          error: '音频有效起音过少，无法可靠检测 BPM',
+        );
+      }
+      var anyEnergy = false;
+      for (final v in onset) {
+        if (v > 0) {
+          anyEnergy = true;
+          break;
+        }
+      }
+      if (!anyEnergy) {
+        return const BpmResult(bpm: null, confidence: 0.0, error: '未检测到有效起音');
+      }
+
+      // 2) 起音包络自相关 + 对数正态先验 → 粗估 BPM
+      final ac = _autocorrelate(onset);
+      final coarse = _tempoFromAC(ac, sampleRate);
+      if (coarse <= 0) {
+        return const BpmResult(bpm: null, confidence: 0.0, error: '无法可靠检测 BPM');
+      }
+
+      // 3) 抛物线细化 + 自相关滞后强度八度消歧
+      final refined = _refineTempo(ac, coarse);
+      final (bpm, _) = _octaveCorrect(ac, refined);
+      if (bpm <= 0) {
+        return const BpmResult(bpm: null, confidence: 0.0, error: '无法可靠检测 BPM');
+      }
+
+      // 4) 起音峰圆周直方图统计投票定相位 + 局部峰吸附 → 拍点
+      final phase = _peakClusterPhase(onset, bpm, sampleRate);
       final beats = _snappedBeats(onset, bpm, sampleRate, phase0: phase);
       if (beats.isEmpty) {
         return const BpmResult(bpm: null, confidence: 0.0, error: '无法跟踪整曲拍点');
