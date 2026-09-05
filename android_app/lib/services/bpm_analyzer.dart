@@ -1,12 +1,18 @@
-/// 设备端 BPM / 拍点分析（纯 Dart 实现，移植自后端 librosa 逻辑）。
+/// 设备端 BPM / 拍点分析（纯 Dart 实现，完整移植 librosa 0.9 beat_track 管线）。
 ///
-/// 流程（与 Web 版保持一致）：
-///   1. 读取单声道 22050 Hz PCM
-///   2. STFT → 谱通量起音包络（spectral-flux onset strength）
-///   3. 对起音包络自相关 → 粗略周期
-///   4. 抛物线插值细化 BPM
-///   5. 八度/脉冲修正（2x / 0.5x / 1.5x / 2/3x）
-///   6. 用拍间间隔的规整度计算置信度
+/// 流程（与 librosa.beat.beat_track 一致）：
+///   1. mel 对数谱（32 频带）+ 频谱差分 → 起音强度包络 onset strength envelope
+///   2. 对起音包络自相关 + 对数正态先验 → 粗估 BPM（tempo()）
+///   3. 抛物线插值细化 BPM（lag 域）
+///   4. 八度/脉冲修正（2x / 0.5x / 1.5x / 2/3x）
+///   5. Ellis(2007) 动态规划拍点跟踪（__beat_tracker）
+///      - 高斯窗卷积做局部得分 → DP 累积得分 + 回溯得到整曲拍点
+///   6. 下拍（重拍）对齐：按小节位置(模 4)折叠能量，把最强一档定为第 1 拍
+///   7. 生成 grid（等距）/ snap（±12% 吸附）拍点时间轴
+///
+/// 相比旧版（全频谱通量 + 能量和最大化猜相位），新管线：
+///   - mel 频带让低频打击乐（底鼓）获得正确权重，抗踩镲/军鼓噪声；
+///   - 拍点由全局动态规划决定，相位稳定、整曲不漂移、首拍更准。
 library;
 
 import 'dart:io';
@@ -19,6 +25,9 @@ import 'fft.dart';
 const int kSampleRate = 22050;
 const int kHop = 512;
 const int kWin = 1024;
+
+/// mel 谱频带数（librosa 默认 128，设备端取 32 已足够，速度快一个量级）。
+const int kMelBands = 32;
 
 class BpmResult {
   final double? bpm;
@@ -89,43 +98,65 @@ class BpmAnalyzer {
     final maxLen = sampleRate * 60;
     final data = samples.length > maxLen ? samples.sublist(0, maxLen) : samples;
     // 整首歌的时长（秒）：相位/BPM 从前 60s 分析窗口推定，
-    // 但 grid/light/snap 拍子时间轴要铺满整首歌，标尺后段才有绿线。
+    // 但 grid/snap 拍子时间轴要铺满整首歌，标尺后段才有绿线。
     final fullDuration = samples.length / sampleRate;
 
     try {
-      final onset = _onsetStrengthFlux(data, sampleRate);
-      final ac = _autocorrelate(onset);
-
-      // 粗略 BPM：在 40–400 范围内取自相关最强周期的候选
-      final bpmCandidates = <double>[-1.0, -1.0];
-      final strength = <double>[-1.0, -1.0];
-      for (double bpm = 40; bpm <= 400; bpm += 1.0) {
-        final s = _strengthAtLag(ac, bpm);
-        if (s > strength[0]) {
-          strength[1] = strength[0];
-          bpmCandidates[1] = bpmCandidates[0];
-          strength[0] = s;
-          bpmCandidates[0] = bpm;
-        } else if (s > strength[1]) {
-          strength[1] = s;
-          bpmCandidates[1] = bpm;
+      // 1) mel 对数谱起音强度包络
+      final onset = _melOnsetStrength(data, sampleRate);
+      if (onset.length < 8) {
+        return const BpmResult(
+          bpm: null,
+          confidence: 0.0,
+          error: '音频有效起音过少，无法可靠检测 BPM',
+        );
+      }
+      var anyEnergy = false;
+      for (final v in onset) {
+        if (v > 0) {
+          anyEnergy = true;
+          break;
         }
       }
-      // 优先选择更强的峰；若第二峰明显更强则用第二峰（避免局部抖动）
-      final coarse = strength[0] >= strength[1] * 0.98 ? bpmCandidates[0] : bpmCandidates[1];
+      if (!anyEnergy) {
+        return const BpmResult(bpm: null, confidence: 0.0, error: '未检测到有效起音');
+      }
+
+      // 2) 自相关 + 对数正态先验 → 扫描 40–320 BPM（lag 域均匀）
+      final ac = _autocorrelate(onset);
+      final coarse = _tempoFromAC(ac, sampleRate);
       if (coarse <= 0) {
         return const BpmResult(bpm: null, confidence: 0.0, error: '无法可靠检测 BPM');
       }
 
+      // 3) 抛物线细化 + 4) 八度/脉冲修正
       final refined = _refineTempo(ac, coarse);
       final (bpm, _) = _octaveCorrect(ac, refined);
+      if (bpm <= 0) {
+        return const BpmResult(bpm: null, confidence: 0.0, error: '无法可靠检测 BPM');
+      }
 
-      // 默认固定拍子网格 + 三种节拍模式 + 相位可靠性
-      final beatMaps = _buildBeatMaps(onset, bpm, total: fullDuration);
+      // 5) Ellis 动态规划拍点跟踪（决定相位与整曲拍点）
+      final beats = _beatTrackDP(onset, bpm, sampleRate);
+      if (beats.isEmpty) {
+        return const BpmResult(bpm: null, confidence: 0.0, error: '无法跟踪整曲拍点');
+      }
+
+      // 6) 下拍对齐：让能量最强的小节位置成为第 1 拍
+      final startFrame = _downbeatAlign(onset, beats);
+
+      // 7) grid（等距铺满整首）+ snap（±12% 吸附打击点）
+      final beatMaps = _buildBeatMaps(
+        onset,
+        bpm,
+        startFrame: startFrame,
+        total: fullDuration,
+      );
       final grid = beatMaps['grid'] ?? <double>[];
       // 可信度：检测出的拍子能对上多少"强"起音峰（能量加权命中率）
       final confidence = _confidence(onset, bpm, grid);
-      final reliability = _phaseReliability(onset, bpm, grid.isNotEmpty ? grid.first : 0.0);
+      final reliability =
+          _phaseReliability(onset, bpm, grid.isNotEmpty ? grid.first : 0.0);
 
       return BpmResult(
         bpm: bpm,
@@ -141,37 +172,112 @@ class BpmAnalyzer {
     }
   }
 
-  // ---------- 起音强度包络（谱通量） ----------
-  static List<double> _onsetStrengthFlux(List<double> data, int sr) {
-    final nFrames = (data.length - kWin) ~/ kHop;
-    if (nFrames < 2) return <double>[];
+  // ---------- 起音强度包络（mel 对数谱谱通量，librosa onset_strength） ----------
 
-    // 汉宁窗
+  /// 赫兹→mel（librosa 公式，ln 形式：2595*log10 = 1127.01048*ln）。
+  static double _hzToMel(double hz) => 1127.01048 * math.log(1.0 + hz / 700.0);
+
+  /// mel→赫兹。
+  static double _melToHz(double mel) => 700.0 * (math.exp(mel / 1127.01048) - 1.0);
+
+  /// 生成 mel 滤波器组权重（nMel x nBins，nBins = nFft/2，librosa mel formula）。
+  static List<List<double>> _melFilterbank({
+    required int nMel,
+    required int sr,
+    required int nFft,
+    double fmin = 20.0,
+    double? fmax,
+  }) {
+    final fTop = fmax ?? sr / 2.0;
+    final nBins = nFft ~/ 2;
+    final melMin = _hzToMel(fmin);
+    final melMax = _hzToMel(fTop);
+    final hzPts = List<double>.generate(nMel + 2, (i) {
+      return _melToHz(melMin + (melMax - melMin) * i / (nMel + 1));
+    });
+    final filters = List.generate(nMel, (_) => List<double>.filled(nBins, 0.0));
+    for (int m = 0; m < nMel; m++) {
+      final hL = hzPts[m], hC = hzPts[m + 1], hR = hzPts[m + 2];
+      final wm = filters[m];
+      for (int b = 0; b < nBins; b++) {
+        final f = b * sr / nFft;
+        if (f >= hL && f < hC) {
+          wm[b] = (f - hL) / (hC - hL);
+        } else if (f >= hC && f <= hR) {
+          wm[b] = (hR - f) / (hR - hC);
+        }
+      }
+    }
+    return filters;
+  }
+
+  /// 中位数（对每帧 32 个 mel 频带的起音做聚合，抗个别频带噪声）。
+  static double _median(List<double> xs) {
+    if (xs.isEmpty) return 0.0;
+    final s = List<double>.of(xs)..sort();
+    final n = s.length;
+    return n.isOdd ? s[n ~/ 2] : (s[n ~/ 2 - 1] + s[n ~/ 2]) / 2.0;
+  }
+
+  /// 标准差（ddof=1，与 numpy.std(ddof=1) 一致）。
+  static double _std(List<double> x) {
+    if (x.length < 2) return 0.0;
+    var mean = 0.0;
+    for (final v in x) {
+      mean += v;
+    }
+    mean /= x.length;
+    var sq = 0.0;
+    for (final v in x) {
+      final d = v - mean;
+      sq += d * d;
+    }
+    return math.sqrt(sq / (x.length - 1));
+  }
+
+  /// mel 对数谱谱通量起音强度（librosa onset_strength，aggregate=median）。
+  /// 对每帧：窗 FFT → |X|² → mel 频带加权 → 10*log10 → 与上一帧正差分 →
+  /// 对 32 个频带取中位数作为该帧的起音强度。
+  static List<double> _melOnsetStrength(List<double> data, int sr) {
+    final nFrames = (data.length - kWin) ~/ kHop;
+    if (nFrames < 4) return <double>[];
+    final filters = _melFilterbank(nMel: kMelBands, sr: sr, nFft: kWin);
     final window = List<double>.generate(kWin, (i) {
       return 0.5 * (1 - math.cos(2 * math.pi * i / (kWin - 1)));
     });
-
-    final flux = <double>[];
-    List<double> prevMag = List<double>.filled(kWin ~/ 2, 0.0);
+    const half = kWin ~/ 2;
     final frame = List<double>.filled(kWin, 0.0);
+    final prev = List<double>.filled(kMelBands, 0.0);
+    final diffs = List<double>.filled(kMelBands, 0.0);
+    final onset = List<double>.filled(nFrames, 0.0);
     for (int f = 0; f < nFrames; f++) {
       final start = f * kHop;
       for (int i = 0; i < kWin; i++) {
         frame[i] = data[start + i] * window[i];
       }
       final spec = fft(frame);
-      final half = kWin ~/ 2;
-      double s = 0.0;
-      for (int b = 0; b < half; b++) {
-        final mag = spec[b].magnitude;
-        final d = mag - prevMag[b];
-        if (d > 0) s += d;
-        prevMag[b] = mag;
+      for (int m = 0; m < kMelBands; m++) {
+        double e = 0;
+        final wm = filters[m];
+        // mel 权重矩阵很多元素为 0，跳过以提速
+        for (int b = 0; b < half; b++) {
+          if (wm[b] != 0) {
+            final mag = spec[b].magnitude;
+            e += mag * mag * wm[b];
+          }
+        }
+        final db = 10.0 * (math.log(e + 1e-10) / math.ln10);
+        var d = db - prev[m];
+        prev[m] = db;
+        if (d < 0) d = 0;
+        diffs[m] = d;
       }
-      flux.add(s);
+      onset[f] = _median(diffs);
     }
-    return flux;
+    return onset;
   }
+
+  // ---------- BPM 估计（librosa tempo + 自相关） ----------
 
   static List<double> _autocorrelate(List<double> x) {
     final n = x.length;
@@ -191,6 +297,32 @@ class BpmAnalyzer {
     }
     ifft(spec);
     return List<double>.generate(n, (i) => spec[i].re);
+  }
+
+  /// 在 lag 域均匀扫描自相关，用对数正态先验（librosa tempo 的 logprior）加权，
+  /// 排除 0-lag 与超出 40–320 BPM 的范围。返回粗估 BPM。
+  static double _tempoFromAC(List<double> ac, int sr) {
+    final frameRate = sr / kHop;
+    const startBpm = 120.0;
+    const stdBpm = 1.0;
+    const minBpm = 40.0;
+    const maxBpm = 320.0;
+    double bestBpm = -1;
+    double bestScore = -1e300;
+    for (int lag = 1; lag < ac.length; lag++) {
+      final bpm = 60.0 * frameRate / lag;
+      if (bpm < minBpm || bpm > maxBpm) continue;
+      // 对数正态先验：中心 120 BPM，std_bpm=1.0（log2 域）
+      final logPrior = -0.5 *
+          math.pow(math.log(bpm / startBpm) / math.ln2 / stdBpm, 2).toDouble();
+      final v = math.max(0.0, ac[lag]);
+      final score = math.log(1.0 + 1e6 * v) + logPrior;
+      if (score > bestScore) {
+        bestScore = score;
+        bestBpm = bpm;
+      }
+    }
+    return bestBpm;
   }
 
   static double _strengthAtLag(List<double> ac, double bpm) {
@@ -270,106 +402,241 @@ class BpmAnalyzer {
     return (double.parse(best.toStringAsFixed(6)), corrected);
   }
 
-  /// 可信度：衡量检测出的拍子网格 [grid] 能对上多少「强」起音峰（能量加权命中率）。
-  /// 相比旧版（所有局部峰间隔的变异系数），这个度量对正常编曲更稳健：
-  /// 非节拍的额外局部峰（军鼓/踩镲/鼓花）只要不落在拍子附近就不会拖低得分，
-  /// 只有起音峰整体对不上拍子（自由节奏/强拍不明显）时才归零。
-  static double _confidence(List<double> onset, double bpm, List<double> grid) {
-    if (onset.length < 4 || grid.length < 2) return 0.0;
-    final period = 60.0 / bpm;
-    if (period <= 0) return 0.0;
-    final window = period * 0.12; // ±12% 周期内视为"落在拍子上"
+  // ---------- 拍点跟踪（Ellis 2007 动态规划，移植自 librosa __beat_tracker） ----------
 
-    // 局部峰（略高于左右邻居即算）
-    final peaks = <int>[];
-    for (int i = 1; i < onset.length - 1; i++) {
-      if (onset[i] > onset[i - 1] && onset[i] >= onset[i + 1]) {
-        peaks.add(i);
-      }
+  /// 局部得分：AGC 标准化（除以标准差）后与高斯窗卷积，
+  /// 把邻近帧的起音能量累积到一个拍内（librosa __beat_local_score）。
+  static List<double> _beatLocalScore(List<double> onset, int period) {
+    final n = onset.length;
+    final norm = _std(onset);
+    if (norm <= 0) return <double>[];
+    final winLen = 2 * period + 1;
+    final w = List<double>.filled(winLen, 0.0);
+    for (int k = -period; k <= period; k++) {
+      final x = k * 32.0 / period;
+      w[k + period] = math.exp(-0.5 * x * x);
     }
-    if (peaks.length < 4) return 0.0;
-
-    // 只用「强」峰（能量高于中位数的一定比例），弱噪声峰不计
-    final energies = List<double>.of(peaks.map((i) => onset[i]))..sort();
-    final thr = energies[energies.length ~/ 2] * 0.5;
-
-    final frameSec = kHop / kSampleRate;
-    double aligned = 0, weight = 0;
-    var gi = 0;
-    for (final i in peaks) {
-      final e = onset[i];
-      if (e < thr) continue;
-      final t = i * frameSec;
-      // 推进到覆盖 t 的拍（峰与 grid 都递增，单调推进即可）
-      while (gi + 1 < grid.length && grid[gi + 1] < t) {
-        gi++;
+    final out = List<double>.filled(n, 0.0);
+    for (int i = 0; i < n; i++) {
+      double s = 0;
+      for (int j = 0; j < winLen; j++) {
+        final idx = i - period + j;
+        if (idx >= 0 && idx < n) {
+          s += (onset[idx] / norm) * w[j];
+        }
       }
-      final d = (t - grid[gi]).abs();
-      final dNext = gi + 1 < grid.length ? (t - grid[gi + 1]).abs() : double.infinity;
-      final bestD = d < dNext ? d : dNext;
-      if (bestD <= window) {
-        aligned += e;
-      }
-      weight += e;
+      out[i] = s;
     }
-    if (weight <= 0) return 0.0;
-    return (aligned / weight).clamp(0.0, 1.0);
+    return out;
   }
 
-  /// 以目标 BPM 生成固定等距拍子网格（秒），并推定相位。
-  /// 相位从 [onset]（通常仅为歌曲前 60s 的分析窗口）推定，但网格会一直铺满到
-  /// [total]（整首歌时长）——这样拍点标尺在歌曲后段也有连续的拍子，
-  /// 而不是只在开头一段有绿线。
-  static List<double> _buildGrid(List<double> onset, double bpm, {required double total}) {
+  /// 核心动态规划（librosa __beat_track_dp）：
+  ///   cum[i] = localscore[i] + max over w ∈ [-2p, -round(p/2)] of
+  ///            (cum[i+w] - tightness * log((-w)/p)²)
+  /// 转移罚项让相邻拍间隔紧贴周期 p，同时容忍轻微 tempo 起伏。
+  /// 与 librosa 一致：候选得分允许为负，取 argmax（而非钳到 0），
+  /// 这样累积分会随拍子逐拍增长，回溯才不至于停在开头。
+  static (List<int>, List<double>) _beatTrackDp(
+    List<double> localscore,
+    int period,
+    double tightness,
+  ) {
+    final n = localscore.length;
+    final backlink = List<int>.filled(n, -1);
+    final cum = List<double>.filled(n, 0.0);
+    final minWin = math.max(1, (period / 2.0).round()); // -round(p/2)
+    final maxWin = 2 * period; // -2p
+    var maxLs = 0.0;
+    for (final v in localscore) {
+      if (v > maxLs) maxLs = v;
+    }
+    if (maxLs <= 0) return (backlink, cum);
+    var firstBeat = true;
+    for (int i = 0; i < n; i++) {
+      double best = -double.infinity;
+      int bestW = -minWin - 1; // 哨兵：表示未找到有效前驱
+      for (int w = -maxWin; w <= -minWin; w++) {
+        final j = i + w;
+        final x = -w.toDouble() / period;
+        if (x <= 0) continue;
+        final lx = math.log(x);
+        final tw = -tightness * lx * lx;
+        // 有有效前驱（j>=0）才加其累计分；否则该候选只有转移罚项（可为负）
+        final cand = j >= 0 ? tw + cum[j] : tw;
+        if (cand > best) {
+          best = cand;
+          bestW = w;
+        }
+      }
+      cum[i] = localscore[i] + (best.isFinite ? best : 0.0);
+      if (firstBeat && localscore[i] < 0.01 * maxLs) {
+        backlink[i] = -1;
+      } else {
+        backlink[i] = i + bestW;
+        firstBeat = false;
+      }
+    }
+    return (backlink, cum);
+  }
+
+  /// 计算局部最大点处累积得分的（下侧）中位数之上的最后一个拍
+  /// （librosa __last_beat）。
+  static int _lastBeat(List<double> cum) {
+    final n = cum.length;
+    final maxes = <int>[];
+    for (int i = 1; i < n - 1; i++) {
+      if (cum[i] > cum[i - 1] && cum[i] > cum[i + 1]) maxes.add(i);
+    }
+    if (maxes.isEmpty) {
+      var mi = 0;
+      for (int i = 1; i < n; i++) {
+        if (cum[i] > cum[mi]) mi = i;
+      }
+      return mi;
+    }
+    final vals = List<double>.of(maxes.map((i) => cum[i]))..sort();
+    final med = vals[vals.length ~/ 2];
+    var best = -1;
+    for (final i in maxes) {
+      if (cum[i] * 2 > med) best = i; // 取最后一个满足条件的局部最大
+    }
+    if (best < 0) best = maxes.last;
+    return best;
+  }
+
+  /// 丢弃首尾起音较弱的拍（librosa __trim_beats，hann5 平滑 + RMS 阈值）。
+  static List<int> _trimBeats(List<double> localscore, List<int> beats) {
+    if (beats.length < 4) return beats;
+    const hann5 = [0.0, 0.5, 1.0, 0.5, 0.0];
+    final m = beats.length;
+    final smooth = List<double>.filled(m, 0.0);
+    for (int i = 0; i < m; i++) {
+      double s = 0, wsum = 0;
+      for (int k = 0; k < 5; k++) {
+        final bi = i + (k - 2);
+        if (bi >= 0 && bi < m) {
+          s += localscore[beats[bi]] * hann5[k];
+          wsum += hann5[k];
+        }
+      }
+      smooth[i] = wsum > 0 ? s / wsum : 0;
+    }
+    var sq = 0.0;
+    for (final v in smooth) {
+      sq += v * v;
+    }
+    final thr = 0.5 * math.sqrt(sq / m);
+    var lo = -1, hi = -1;
+    for (int i = 0; i < m; i++) {
+      if (smooth[i] > thr) {
+        if (lo < 0) lo = i;
+        hi = i;
+      }
+    }
+    if (lo < 0 || hi < 0 || lo >= hi) return beats;
+    return beats.sublist(lo, hi + 1);
+  }
+
+  /// 完整 Ellis 拍点跟踪，返回拍点所在帧索引（升序）。
+  static List<int> _beatTrackDP(
+    List<double> onset,
+    double bpm,
+    int sr, {
+    double tightness = 100.0,
+  }) {
+    final n = onset.length;
+    if (n < 4 || bpm <= 0) return <int>[];
+    final frameRate = sr / kHop;
+    var period = (60.0 * frameRate / bpm).round();
+    if (period < 4) period = 4;
+    if (period > n ~/ 2) period = n ~/ 2;
+    if (period < 4) return <int>[];
+
+    final localscore = _beatLocalScore(onset, period);
+    if (localscore.length != n) return <int>[];
+
+    final (backlink, cum) = _beatTrackDp(localscore, period, tightness);
+
+    final last = _lastBeat(cum);
+    if (last < 0) return <int>[];
+
+    final rev = <int>[last];
+    while (backlink[rev.last] >= 0) {
+      final p = backlink[rev.last];
+      if (p >= rev.last) break; // 防御环路
+      rev.add(p);
+    }
+    final beats = rev.reversed.toList();
+    return _trimBeats(localscore, beats);
+  }
+
+  /// 下拍（重拍）对齐：按小节位置（模 4）折叠各拍处的起音能量，
+  /// 把能量最强的一档视为第 1 拍，返回对应帧（librosa 无此步，是我们对
+  /// 「首拍」的增强：让 grid 从强拍开始，而不是任意能量最大化点）。
+  static int _downbeatAlign(List<double> onset, List<int> beats) {
+    if (beats.length < 4) return beats.first;
+    const int w = 4;
+    final sums = List<double>.filled(w, 0.0);
+    final cnts = List<int>.filled(w, 0);
+    for (int i = 0; i < beats.length; i++) {
+      final f = beats[i];
+      var best = -1e300;
+      for (int d = -1; d <= 1; d++) {
+        final idx = f + d;
+        if (idx >= 0 && idx < onset.length && onset[idx] > best) best = onset[idx];
+      }
+      final e = best < 0 ? 0.0 : best;
+      sums[i % w] += e;
+      cnts[i % w]++;
+    }
+    var bestMode = 0;
+    var bestScore = -1.0;
+    for (int m = 0; m < w; m++) {
+      if (cnts[m] == 0) continue;
+      final s = sums[m] / cnts[m];
+      if (s > bestScore) {
+        bestScore = s;
+        bestMode = m;
+      }
+    }
+    if (bestMode == 0) return beats.first;
+    for (int i = 0; i < beats.length; i++) {
+      if (i % w == bestMode) return beats[i];
+    }
+    return beats.first;
+  }
+
+  // ---------- 拍点时间轴（grid / snap） ----------
+
+  /// 以 [startFrame]（通常来自 DP 下拍对齐的首拍）为相位，等距铺满到 [total]。
+  static List<double> _buildGrid(
+    int startFrame,
+    double bpm, {
+    required double total,
+  }) {
     if (bpm <= 0) return <double>[];
     final period = 60.0 / bpm;
-    // 用起音能量定位相位：取每个周期内能量最强的位置
-    final phase = _findPhase(onset, period);
+    final start = startFrame * kHop / kSampleRate;
     final times = <double>[];
-    for (double t = phase; t < total; t += period) {
+    for (double t = start; t < total; t += period) {
       times.add(double.parse(t.toStringAsFixed(3)));
     }
     return times;
   }
 
-  /// 在 [0, period) 内找一个相位，使得 period*k + phase 处起音能量总和最大。
-  static double _findPhase(List<double> onset, double period) {
-    final total = onset.length * kHop / kSampleRate;
-    final nk = (total / period).ceil() + 1;
-    double bestPhi = 0, bestE = -1e18;
-    const steps = 40.0;
-    for (int i = 0; i < steps; i++) {
-      final phi = (i * period) / steps;
-      double e = 0;
-      for (int k = 0; k < nk; k++) {
-        final sec = phi + k * period;
-        final idx = (sec * kSampleRate / kHop).round();
-        if (idx >= 0 && idx < onset.length) e += onset[idx];
-      }
-      if (e > bestE) {
-        bestE = e;
-        bestPhi = phi;
-      }
-    }
-    return bestPhi;
-  }
-
   /// 生成节拍模式的时间轴（原始时间轴秒）：
   ///   grid（固定拍子，完全等距，铺满整首歌）/
   ///   snap（跟随起音，±12% 内吸附打击点；超出窗口部分回退等距）。
-  /// 键与 [BeatMode] 名称对应，保证始终含 grid。
   static Map<String, List<double>> _buildBeatMaps(
     List<double> onset,
     double bpm, {
+    required int startFrame,
     required double total,
   }) {
     if (bpm <= 0) return <String, List<double>>{};
     final period = 60.0 / bpm;
-    final grid = _buildGrid(onset, bpm, total: total);
+    final grid = _buildGrid(startFrame, bpm, total: total);
     if (grid.isEmpty) return <String, List<double>>{'grid': grid};
-
-    // 以 grid 为基础，向局部起音峰吸附（在原周期内，snap 不越界）；
-    // grid 已铺满整首歌，窗口外无起音峰时会自然回退到等距位置。
     final snap = _followOnsets(onset, grid, period, 0.12);
     return <String, List<double>>{
       'grid': grid,
@@ -387,13 +654,12 @@ class BpmAnalyzer {
   ) {
     final win = period * fraction; // 秒
     final result = <double>[];
-    final frameSec = kHop / kSampleRate;
+    const frameSec = kHop / kSampleRate;
     for (final t in grid) {
       final lo = (t - win).clamp(0.0, double.infinity);
       final hi = t + win;
       final loIdx = math.max(0, (lo / frameSec).floor());
       final hiIdx = math.min(onset.length - 1, (hi / frameSec).ceil());
-      // 在窗口内找局部峰（能量最大的位置）
       var bestIdx = -1;
       var bestE = -1e18;
       for (int i = loIdx; i <= hiIdx; i++) {
@@ -413,13 +679,56 @@ class BpmAnalyzer {
     return result;
   }
 
+  // ---------- 置信度 / 相位可靠性 ----------
+
+  /// 可信度：衡量检测出的拍子网格 [grid] 能对上多少「强」起音峰（能量加权命中率）。
+  /// 非节拍的额外局部峰（军鼓/踩镲/鼓花）只要不落在拍子附近就不会拖低得分，
+  /// 只有起音峰整体对不上拍子（自由节奏/强拍不明显）时才归零。
+  static double _confidence(List<double> onset, double bpm, List<double> grid) {
+    if (onset.length < 4 || grid.length < 2) return 0.0;
+    final period = 60.0 / bpm;
+    if (period <= 0) return 0.0;
+    final window = period * 0.12; // ±12% 周期内视为"落在拍子上"
+
+    final peaks = <int>[];
+    for (int i = 1; i < onset.length - 1; i++) {
+      if (onset[i] > onset[i - 1] && onset[i] >= onset[i + 1]) {
+        peaks.add(i);
+      }
+    }
+    if (peaks.length < 4) return 0.0;
+
+    final energies = List<double>.of(peaks.map((i) => onset[i]))..sort();
+    final thr = energies[energies.length ~/ 2] * 0.5;
+
+    const frameSec = kHop / kSampleRate;
+    double aligned = 0, weight = 0;
+    var gi = 0;
+    for (final i in peaks) {
+      final e = onset[i];
+      if (e < thr) continue;
+      final t = i * frameSec;
+      while (gi + 1 < grid.length && grid[gi + 1] < t) {
+        gi++;
+      }
+      final d = (t - grid[gi]).abs();
+      final dNext = gi + 1 < grid.length ? (t - grid[gi + 1]).abs() : double.infinity;
+      final bestD = d < dNext ? d : dNext;
+      if (bestD <= window) {
+        aligned += e;
+      }
+      weight += e;
+    }
+    if (weight <= 0) return 0.0;
+    return (aligned / weight).clamp(0.0, 1.0);
+  }
+
   /// 相位可靠性（0..1）：用「能量和最大化」与「强峰相位中位」两个独立
   /// 信号交叉验证。两者在周期上的差越大（最多 1/4 周期 → 0），可靠性越低。
   static double _phaseReliability(List<double> onset, double bpm, double phaseA) {
     if (bpm <= 0 || onset.length < 8) return 0.5;
     final period = 60.0 / bpm;
-    final frameSec = kHop / kSampleRate;
-    // 方法 B：从强起音峰（高于均值）取相位模周期后的中位数。
+    const frameSec = kHop / kSampleRate;
     final mean = onset.reduce((a, b) => a + b) / onset.length;
     final thr = mean * 0.6;
     final offs = <double>[];
@@ -432,7 +741,6 @@ class BpmAnalyzer {
     if (offs.length < 4) return 0.5;
     offs.sort();
     final med = offs[offs.length ~/ 2];
-    // 圆上距离：phaseA 与 med 的最小弧长
     var d = (phaseA % period - med).abs();
     d = math.min(d, period - d);
     final frac = d / period;
