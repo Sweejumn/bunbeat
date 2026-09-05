@@ -27,7 +27,10 @@ android {
         // You can force using the value of versionCode by specifying the `-P force-version-code-ignoring-abi=true`
         // flag during build.
         versionCode = flutter.versionCode
-        versionName = flutter.versionName
+        // versionName 默认形如 "0.1.0+65"：部分系统界面（应用信息/安装完成页）会把
+        // "+" 及之后的构建号截断，只显示 0.1.0。改成 "0.1.0 (build 65)" 这类直观
+        // 形式，保证手机上能完整看到主版本与构建号。
+        versionName = "${flutter.versionName.substringBefore('+')} (build ${flutter.versionCode})"
     }
 
     buildTypes {

@@ -29,7 +29,9 @@ class _AboutPageState extends State<AboutPage> {
   Future<void> _loadVersion() async {
     final info = await PackageInfo.fromPlatform();
     if (mounted) {
-      setState(() => _version = '${info.version}+${info.buildNumber}');
+      // Android versionName 现在形如 "0.1.0 (build 65)"，已包含构建号，
+      // 直接展示（不要再拼 +buildNumber 以免冗余）。
+      setState(() => _version = info.version);
     }
   }
 

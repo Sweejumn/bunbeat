@@ -55,12 +55,14 @@ class UpdateService {
   Future<UpdateCheck> checkForUpdate() async {
     try {
       final current = await PackageInfo.fromPlatform();
-      // PackageInfo.version 是 versionName（如 0.1.0），不带 build 号；
-      // build 号在 versionCode（buildNumber）里。这里拼成 0.1.0+32，
-      // 否则 _isNewer 因 current 无 build 号会回退到 semver 相等而漏判更新。
+      // PackageInfo.version 是 versionName（Android 上形如 "0.1.0 (build 65)"），
+      // build 号在 versionCode（buildNumber）里。这里提取主版本，拼成 0.1.0+32，
+      // 与 GitHub tag 一致、比较最可靠；否则 _isNewer 因 current 无 build 号会
+      // 回退到 semver 相等而漏判更新。
+      final mainVersion = current.version.split(' (build ').first.trim();
       final currentFull = current.buildNumber.isNotEmpty
-          ? '${current.version}+${current.buildNumber}'
-          : current.version;
+          ? '$mainVersion+${current.buildNumber}'
+          : mainVersion;
       final dio = Dio();
       final resp = await dio.get<Map<String, dynamic>>(
         _api,
