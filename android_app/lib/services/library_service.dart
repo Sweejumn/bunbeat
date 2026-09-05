@@ -1,6 +1,7 @@
 /// 曲库状态服务：管理从文件夹读取到的歌曲、逐个分析 BPM、产出入列播放列表。
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -13,6 +14,7 @@ import 'analysis_cache.dart';
 import 'audio_decode.dart';
 import 'audio_player_service.dart';
 import 'audio_reader.dart';
+import 'bpm_analyzer.dart';
 import 'ncm_service.dart';
 
 /// 曲库高可观察状态（变更事件驱动 UI）。
@@ -62,8 +64,16 @@ class LibraryService extends ChangeNotifier {
     } catch (_) {}
   }
 
+  /// 缓存命中的分析结果来自旧算法（算法已升级，需用当前算法在后台自动重测）。
+  /// 这里保持为「无感知」列表：秒开显示旧结果，后台排队刷新，不打断用户。
+  final List<Song> _staleSongs = [];
+
   List<Song> get songs => List.unmodifiable(_songs);
   bool get isAnalyzing => _analyzingTotal > 0 && _analyzingDone < _analyzingTotal;
+
+  /// 是否仍有后台算法刷新（旧算法结果 → 当前算法）在进行。
+  bool get isRefreshing => _refreshing;
+  bool _refreshing = false;
 
   /// 已归档歌曲（不出现在曲库、也不进推荐；可在归档页放回）。
   List<Song> get archived => List.unmodifiable(_archived);
@@ -104,6 +114,32 @@ class LibraryService extends ChangeNotifier {
     _analyzingTotal = 0;
     _analyzingDone = 0;
     notifyListeners();
+    // 秒开完成后，后台自动用当前算法重测旧算法结果（不打断用户、无需手动重测）。
+    if (_staleSongs.isNotEmpty) {
+      unawaited(_refreshStaleSongs(dir));
+    }
+  }
+
+  /// 后台自动刷新：把旧算法测得的缓存依次用当前算法重测并写回缓存。
+  /// 全程不出现在 UI 进度（秒开已完成），失败则保留旧结果并跳过。
+  Future<void> _refreshStaleSongs(String workDir) async {
+    final queue = List<Song>.from(_staleSongs);
+    _staleSongs.clear();
+    if (queue.isEmpty || _refreshing) return;
+    _refreshing = true;
+    notifyListeners();
+    try {
+      for (final song in queue) {
+        // 手动 BPM 不自动覆盖；已归档的不再刷新。
+        if (song.bpmStatus == BpmStatus.done && song.originalBpm != null) {
+          if (_archivedIds.contains(song.id)) continue;
+        }
+        await _analyze(song, workDir);
+      }
+    } finally {
+      _refreshing = false;
+      notifyListeners();
+    }
   }
 
   /// 若 [song] 源为 .ncm，先解密为可播放文件并缓存；成功则把 song 指向解密产物。
@@ -124,11 +160,15 @@ class LibraryService extends ChangeNotifier {
   }
 
   /// 单首歌：先查缓存，命中则秒开；未命中/文件已变更才分析。
+  /// 缓存结果来自旧算法（算法升级）时仍秒开显示，但排队后台自动用当前算法重测，
+  /// 用户无需手动点击「重新测量」。
   Future<void> _loadSong(Song song, String workDir) async {
-    final cached = await AnalysisCache.instance.read(song.id, song.filePath);
+    final cached = await AnalysisCache.instance.read(song.id, song.filePath,
+        currentAlgorithm: BpmAnalyzer.kActiveAlgorithm);
     if (cached != null) {
       debugPrint(
-          '[RUNBPM] cache_hit ${song.filename} bpm=${cached.bpm?.toStringAsFixed(1)} manual=${cached.manual}');
+          '[RUNBPM] cache_hit ${song.filename} bpm=${cached.bpm?.toStringAsFixed(1)} '
+          'manual=${cached.manual} stale=${cached.stale}');
       song.bpmStatus = BpmStatus.done;
       song.originalBpm = cached.bpm;
       song.bpmConfidence = cached.confidence;
@@ -137,6 +177,8 @@ class LibraryService extends ChangeNotifier {
       song.beatTimes = cached.beatTimes;
       song.beatMaps = cached.beatMaps;
       song.phaseReliability = cached.phaseReliability;
+      song.algorithm = cached.algorithm;
+      song.byAlgorithm = cached.byAlgorithm;
       // 仅当缓存里有持久化封面才覆盖；否则保留 NCM 解密出的内嵌封面。
       if (cached.artworkFile != null) {
         song.artworkPath = await AnalysisCache.instance
@@ -144,6 +186,10 @@ class LibraryService extends ChangeNotifier {
       }
       _analyzingDone++;
       notifyListeners();
+      // 旧算法结果：秒开后排队，在整批载入完成后后台自动用当前算法重测。
+      if (cached.stale && !cached.manual) {
+        _staleSongs.add(song);
+      }
       return;
     }
     await _analyze(song, workDir);
@@ -175,6 +221,9 @@ class LibraryService extends ChangeNotifier {
         song.beatTimes = res.beatTimes;
         song.beatMaps = res.beatMaps;
         song.phaseReliability = res.phaseReliability;
+        song.algorithm = BpmAnalyzer.kActiveAlgorithm;
+        song.byAlgorithm = {...song.byAlgorithm,
+          BpmAnalyzer.kActiveAlgorithm.toString(): res.bpm!};
       }
       // 封面提取从独立的 ffmpeg 会话进行，双向都要 try。
       try {
@@ -200,6 +249,7 @@ class LibraryService extends ChangeNotifier {
           beatMaps: song.beatMaps,
           phaseReliability: song.phaseReliability,
           artworkFile: persistedArtwork,
+          algorithm: BpmAnalyzer.kActiveAlgorithm,
         );
       }
     } catch (e) {
@@ -251,6 +301,7 @@ class LibraryService extends ChangeNotifier {
         phaseReliability: cached?.phaseReliability ?? song.phaseReliability,
         manual: true,
         artworkFile: cached?.artworkFile,
+        algorithm: cached?.algorithm ?? BpmAnalyzer.kActiveAlgorithm,
       );
     });
   }

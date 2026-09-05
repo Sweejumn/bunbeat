@@ -478,7 +478,8 @@ class _LibraryPageState extends State<LibraryPage> {
         return song.bpmError ?? '分析失败';
       case BpmStatus.done:
         final conf = (song.bpmConfidence ?? 0) * 100;
-        return '${context.read<BpmDisplayController>().format(song.originalBpm)} BPM · 可信度 ${conf.round()}%';
+        final algo = song.algorithm != null ? ' · 算法${song.algorithm}' : '';
+        return '${context.read<BpmDisplayController>().format(song.originalBpm)} BPM · 可信度 ${conf.round()}%$algo';
     }
   }
 
@@ -572,7 +573,8 @@ class _SongTile extends StatelessWidget {
         return song.bpmError ?? '分析失败';
       case BpmStatus.done:
         final conf = (song.bpmConfidence ?? 0) * 100;
-        return '${outer.read<BpmDisplayController>().format(song.originalBpm)} BPM · 可信度 ${conf.round()}%';
+        final algo = song.algorithm != null ? ' · 算法${song.algorithm}' : '';
+        return '${outer.read<BpmDisplayController>().format(song.originalBpm)} BPM · 可信度 ${conf.round()}%$algo';
     }
   }
 

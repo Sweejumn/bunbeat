@@ -111,5 +111,52 @@ void main() {
       expect(r, isNotNull);
       expect(r!.bpm, 60.0);
     });
+
+    test('算法升级：旧算法结果 stale=true 且不失效（秒开 + 后台重测用）', () async {
+      final c = makeCache(base);
+      // 旧算法（算法4）写入
+      await c.write('s1', src.path, bpm: 121.0, algorithm: 4);
+      // 当前算法为 5：旧结果保留但标记 stale
+      final r = await c.read('s1', src.path, currentAlgorithm: 5);
+      expect(r, isNotNull);
+      expect(r!.bpm, 121.0);
+      expect(r.algorithm, 4);
+      expect(r.stale, isTrue);
+    });
+
+    test('算法一致：结果非 stale', () async {
+      final c = makeCache(base);
+      await c.write('s2', src.path, bpm: 150.0, algorithm: 5);
+      final r = await c.read('s2', src.path, currentAlgorithm: 5);
+      expect(r!.stale, isFalse);
+      expect(r.algorithm, 5);
+    });
+
+    test('各算法 BPM 历史保留（byAlgorithm 合并不覆盖）', () async {
+      final c = makeCache(base);
+      await c.write('h1', src.path, bpm: 120.0, algorithm: 4);
+      await c.write('h1', src.path, bpm: 125.0, algorithm: 5);
+      final r = await c.read('h1', src.path, currentAlgorithm: 5);
+      expect(r!.byAlgorithm['4'], 120.0);
+      expect(r.byAlgorithm['5'], 125.0);
+      expect(r.bpm, 125.0);
+      expect(r.stale, isFalse);
+    });
+
+    test('旧格式缓存（无 algorithm 字段）视为旧算法结果 stale', () async {
+      final c = makeCache(base);
+      // 手工构造 v4 格式 JSON（无 algorithm）
+      final dir = Directory('${base.path}/analysis');
+      await dir.create(recursive: true);
+      final stat = await src.stat();
+      await File('${dir.path}/legacy.json').writeAsString(
+          '{"schemaVersion":4,"bpm":99.0,"manual":false,'
+          '"fileSize":${stat.size},"fileMtime":${stat.modified.millisecondsSinceEpoch}}');
+      final r = await c.read('legacy', src.path, currentAlgorithm: 5);
+      expect(r, isNotNull);
+      expect(r!.bpm, 99.0);
+      expect(r.stale, isTrue);
+      expect(r.algorithm, isNull);
+    });
   });
 }

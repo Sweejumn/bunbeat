@@ -55,6 +55,12 @@ class Song {
   /// 0..1：两个独立相位信号是否一致（低 = 建议手动校准）。null 表示未评估。
   double? phaseReliability;
 
+  /// 产生该结果的算法编号（BpmAnalyzer.kActiveAlgorithm 时的编号）；null 表示未知/旧缓存。
+  int? algorithm;
+
+  /// 各算法最近一次测得的 BPM（键 = 算法编号字符串），保留不同算法的历史结果。
+  Map<String, double> byAlgorithm = const {};
+
   /// 内嵌封面图的缓存文件路径（jpeg/png），null 表示无封面。
   String? artworkPath;
 

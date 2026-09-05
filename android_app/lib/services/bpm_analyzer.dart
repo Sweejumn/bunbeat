@@ -18,6 +18,10 @@
 /// 各引擎（librosa 蓝本 / FourierTempogram+PLP / 自相关+峰投票 / 低频底鼓相位 / …）
 /// 保留为独立静态方法，用于离线 A/B 与真实曲目对比实测。
 /// 外部 API（`analyzePcm` / `BpmResult`）不变。
+/// 从 v0.1.0+65 起，置信度（confidence）重构为三证据加权：
+///   脉冲清晰度（拍 vs 半拍折叠能量集中度）＋周期强度（自相关峰突出度）
+///   ＋落拍命中率，替代旧版单一「强峰落拍命中」（对真实曲目区分度差）；
+///   相位可靠性也改用折叠相位直方图（对齐度＋尖锐度）。
 library;
 
 import 'dart:io';
@@ -714,72 +718,163 @@ class BpmAnalyzer {
     return result;
   }
 
-  // ---------- 置信度 / 相位可靠性 ----------
+  // ---------- 置信度 / 相位可靠性（v0.1.0+65 重构） ----------
+  // 旧版只看「强峰落拍命中率」，对真实曲目区分度差（实测全部卡在 ~0.2x）。
+  // 新版取三个独立证据加权，衡量「检测到的周期律动到底有多真实」：
+  //   1) 脉冲清晰度：把起音包络按节拍周期折叠，比较「拍相位 ±12%」与
+  //      「半拍反相位 ±12%」的能量集中度 → 判定是否真有周期脉冲；
+  //   2) 周期强度：自相关在拍频滞后处的归一化峰高相对全域基线
+  //      （40–320 BPM 滞后中位数）的突出度 → 判定周期是否真实显著；
+  //   3) 落拍命中率：沿用旧版能量加权命中（降权），保留「网格对上起音峰」。
 
-  /// 可信度：衡量检测出的拍子网格 [grid] 能对上多少「强」起音峰（能量加权命中率）。
-  /// 非节拍的额外局部峰（军鼓/踩镲/鼓花）只要不落在拍子附近就不会拖低得分，
-  /// 只有起音峰整体对不上拍子（自由节奏/强拍不明显）时才归零。
+  static int _circDist(int a, int b, int n) {
+    final d = (a - b).abs() % n;
+    return math.min(d, n - d);
+  }
+
   static double _confidence(List<double> onset, double bpm, List<double> grid) {
     if (onset.length < 4 || grid.length < 2) return 0.0;
     final period = 60.0 / bpm;
     if (period <= 0) return 0.0;
-    final window = period * 0.12; // ±12% 周期内视为"落在拍子上"
+    const frameSec = kHop / kSampleRate;
 
+    // 1) 脉冲清晰度：按周期折叠，量「主峰相窗」内的能量占比（扣除均匀基线）。
+    //    真实音乐宁可容忍反拍军鼓/踩镲也落在拍窗两侧——只要律动能量集中在
+    //    一个节拍相位窗，就说明确实存在周期脉冲。
+    const bins = 48;
+    final hist = List<double>.filled(bins, 0.0);
+    for (int i = 0; i < onset.length; i++) {
+      final e = onset[i];
+      if (e <= 0) continue;
+      final t = i * frameSec;
+      final ph = t % period;
+      var b = ((ph / period) * bins).floor();
+      if (b < 0) b = 0;
+      if (b >= bins) b = bins - 1;
+      hist[b] += e;
+    }
+    int peakBin = 0;
+    for (int b = 1; b < bins; b++) {
+      if (hist[b] > hist[peakBin]) peakBin = b;
+    }
+    final win = (bins * 0.10).round().clamp(1, bins ~/ 4);
+    var peakE = 0.0, totE = 0.0;
+    for (int b = 0; b < bins; b++) {
+      if (_circDist(b, peakBin, bins) <= win) peakE += hist[b];
+      totE += hist[b];
+    }
+    // 均匀情况下该窗的期望占比 → 用它对「相窗内占比」归一，越集中分数越高
+    final base = (2 * win + 1) / bins;
+    final clarity = totE > 0 && base < 1.0
+        ? math.max(0.0, ((peakE / totE) - base) / (1.0 - base))
+        : 0.0;
+
+    // 2) 周期强度：归一化自相关峰突出度
+    double periodicStrength = 0.0;
+    final ac = _autocorrelate(onset);
+    final ac0 = ac.isNotEmpty ? ac[0] : 0.0;
+    if (ac0 > 0) {
+      final lag = (period / frameSec).round();
+      const frameRate = kSampleRate / kHop;
+      final norms = <double>[];
+      int? peakIndex;
+      for (int l = 1; l < ac.length; l++) {
+        final b = 60.0 * frameRate / l;
+        if (b < 40 || b > 320) continue;
+        final v = math.max(0.0, ac[l] / ac0);
+        norms.add(v);
+        if (l == lag) peakIndex = l;
+      }
+      if (norms.isNotEmpty) {
+        norms.sort();
+        final med = norms[norms.length ~/ 2];
+        final peak = peakIndex != null ? math.max(0.0, ac[peakIndex] / ac0) : 0.0;
+        periodicStrength = (med >= 1.0)
+            ? 0.0
+            : ((peak - med) / (1.0 - med + 1e-9)).clamp(0.0, 1.0);
+      }
+    }
+
+    // 3) 落拍命中率（沿用旧版，轻权重）
+    final window = period * 0.12;
     final peaks = <int>[];
     for (int i = 1; i < onset.length - 1; i++) {
-      if (onset[i] > onset[i - 1] && onset[i] >= onset[i + 1]) {
-        peaks.add(i);
-      }
+      if (onset[i] > onset[i - 1] && onset[i] >= onset[i + 1]) peaks.add(i);
     }
-    if (peaks.length < 4) return 0.0;
-
-    final energies = List<double>.of(peaks.map((i) => onset[i]))..sort();
-    final thr = energies[energies.length ~/ 2] * 0.5;
-
-    const frameSec = kHop / kSampleRate;
-    double aligned = 0, weight = 0;
-    var gi = 0;
-    for (final i in peaks) {
-      final e = onset[i];
-      if (e < thr) continue;
-      final t = i * frameSec;
-      while (gi + 1 < grid.length && grid[gi + 1] < t) {
-        gi++;
+    double hitRate = 0.0;
+    if (peaks.length >= 4) {
+      final energies = List<double>.of(peaks.map((i) => onset[i]))..sort();
+      final thr = energies[energies.length ~/ 2] * 0.5;
+      double aligned = 0, weight = 0;
+      var gi = 0;
+      for (final i in peaks) {
+        final e = onset[i];
+        if (e < thr) continue;
+        final t = i * frameSec;
+        while (gi + 1 < grid.length && grid[gi + 1] < t) {
+          gi++;
+        }
+        final d = (t - grid[gi]).abs();
+        final dNext =
+            gi + 1 < grid.length ? (t - grid[gi + 1]).abs() : double.infinity;
+        final bestD = d < dNext ? d : dNext;
+        if (bestD <= window) aligned += e;
+        weight += e;
       }
-      final d = (t - grid[gi]).abs();
-      final dNext = gi + 1 < grid.length ? (t - grid[gi + 1]).abs() : double.infinity;
-      final bestD = d < dNext ? d : dNext;
-      if (bestD <= window) {
-        aligned += e;
-      }
-      weight += e;
+      if (weight > 0) hitRate = (aligned / weight).clamp(0.0, 1.0);
     }
-    if (weight <= 0) return 0.0;
-    return (aligned / weight).clamp(0.0, 1.0);
+
+    // 加权合成：清晰度为主，周期强度次之，命中为辅
+    final conf = 0.45 * clarity + 0.35 * periodicStrength + 0.20 * hitRate;
+    return conf.clamp(0.0, 1.0);
   }
 
-  /// 相位可靠性（0..1）：用「能量和最大化」与「强峰相位中位」两个独立
-  /// 信号交叉验证。两者在周期上的差越大（最多 1/4 周期 → 0），可靠性越低。
+  /// 相位可靠性（0..1）：用「折叠相位直方图」衡量检测相位是否站在真实强拍上。
+  ///   · 对齐度：把起音按 [phaseA] 折叠，直方图最高峰若集中在 0（拍相位）附近，
+  ///     说明 [phaseA] 正好落在能量最强拍上；
+  ///   · 清晰度：最高峰能量相对反相位（半拍）的集中度，衡量律动是否尖锐。
+  /// 两者加权 → 0..1。节奏明确且相位对 → 高；自由节奏/相位错 → 低。
   static double _phaseReliability(List<double> onset, double bpm, double phaseA) {
-    if (bpm <= 0 || onset.length < 8) return 0.5;
+    if (bpm <= 0 || onset.length < 8 || phaseA.isNaN) return 0.5;
     final period = 60.0 / bpm;
+    if (period <= 0) return 0.5;
     const frameSec = kHop / kSampleRate;
-    final mean = onset.reduce((a, b) => a + b) / onset.length;
-    final thr = mean * 0.6;
-    final offs = <double>[];
-    for (int i = 2; i < onset.length - 2; i++) {
-      if (onset[i] >= onset[i - 1] && onset[i] > onset[i + 1] && onset[i] > thr) {
-        final t = i * frameSec;
-        offs.add(t % period);
+    const bins = 64;
+    final hist = List<double>.filled(bins, 0.0);
+    var total = 0.0;
+    for (int i = 0; i < onset.length; i++) {
+      final e = onset[i];
+      if (e <= 0) continue;
+      final t = i * frameSec;
+      var ph = (t - phaseA) % period;
+      if (ph < 0) ph += period;
+      var b = ((ph / period) * bins).floor();
+      if (b < 0) b = 0;
+      if (b >= bins) b = bins - 1;
+      hist[b] += e;
+      total += e;
+    }
+    if (total <= 0) return 0.0;
+    int peakBin = 0;
+    for (int b = 1; b < bins; b++) {
+      if (hist[b] > hist[peakBin]) peakBin = b;
+    }
+    final alignFrac = _circDist(peakBin, 0, bins) / bins; // 0..0.5
+    final align = (1.0 - alignFrac / 0.25).clamp(0.0, 1.0);
+    final win = (bins * 0.12).round().clamp(1, bins ~/ 4);
+    final off = (peakBin + bins ~/ 2) % bins;
+    double onE = 0, offE = 0;
+    for (int b = 0; b < bins; b++) {
+      if (_circDist(b, peakBin, bins) <= win) {
+        onE += hist[b];
+      } else if (_circDist(b, off, bins) <= win) {
+        offE += hist[b];
       }
     }
-    if (offs.length < 4) return 0.5;
-    offs.sort();
-    final med = offs[offs.length ~/ 2];
-    var d = (phaseA % period - med).abs();
-    d = math.min(d, period - d);
-    final frac = d / period;
-    return (1.0 - frac / 0.25).clamp(0.0, 1.0);
+    final clarity = (onE + offE) > 0
+        ? math.max(0.0, (onE - offE) / (onE + offE))
+        : 0.0;
+    return (0.6 * align + 0.4 * clarity).clamp(0.0, 1.0);
   }
 
   // ---------- 算法 2：FourierTempogram + PLP（v0.1.0+61） ----------
