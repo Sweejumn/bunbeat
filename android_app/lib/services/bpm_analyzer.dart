@@ -15,8 +15,9 @@
 ///   - 拍点由全局动态规划决定，相位稳定、整曲不漂移、首拍更准。
 ///
 /// 从 v0.1.0+61 起支持多引擎：`kActiveAlgorithm` 切换当前默认算法，
-/// 各引擎（librosa 蓝本 / FourierTempogram+PLP / 自相关+峰投票 / …）保留为独立静态方法，
-/// 用于离线 A/B 与真实曲目对比实测。外部 API（`analyzePcm` / `BpmResult`）不变。
+/// 各引擎（librosa 蓝本 / FourierTempogram+PLP / 自相关+峰投票 / 低频底鼓相位 / …）
+/// 保留为独立静态方法，用于离线 A/B 与真实曲目对比实测。
+/// 外部 API（`analyzePcm` / `BpmResult`）不变。
 library;
 
 import 'dart:io';
@@ -90,7 +91,8 @@ class BpmAnalyzer {
   ///   1 = librosa 蓝本（mel 谱通量 + Ellis DP）        —— 默认直到 v0.1.0+60
   ///   2 = FourierTempogram + PLP（全频谱通量 + 频域估拍）—— v0.1.0+61 起默认
   ///   3 = 自相关估拍 + 起音峰圆周直方图定相位（统计相位，无 DP）—— v0.1.0+62 起默认
-  static const int kActiveAlgorithm = 3;
+  ///   4 = 自相关估拍 + 低频（底鼓）频带能量最大化定相位 —— v0.1.0+63 起默认
+  static const int kActiveAlgorithm = 4;
 
   /// 对外统一入口：按当前版本选中的算法分析（纯 Dart，无外部依赖）。
   static BpmResult analyzePcm(
@@ -103,8 +105,10 @@ class BpmAnalyzer {
       case 2:
         return analyzeTempogramPcm(samples, sampleRate: sampleRate);
       case 3:
-      default:
         return analyzePeakClusterPcm(samples, sampleRate: sampleRate);
+      case 4:
+      default:
+        return analyzeBassKickPcm(samples, sampleRate: sampleRate);
     }
   }
 
@@ -816,7 +820,53 @@ class BpmAnalyzer {
     return onset;
   }
 
-  /// Tempogram 参数：窗长 M 帧（≈6s）、窗移 hopT 帧、FFT 零填充到 N。
+  /// 频带受限谱通量起音强度：与 [_fluxOnset] 相同，但仅累计低于 [cutHz] 的
+  /// bin 的正幅度差，并按该频带（而非全频段）的幅度和归一化。
+  /// 用于算法 4：聚焦底鼓/低音打击（<160Hz），把相位锚定到 kick 上。
+  /// 返回 (onset, lowFracMean)：lowFracMean = 每帧低频带能量/全频能量均值，
+  /// 用于判定该比例是否高到值得以低频相位为准（纯合成哒哒声该值很低）。
+  static (List<double>, double) _bandFluxOnset(
+    List<double> data,
+    int sr, {
+    int hop = kHop,
+    double cutHz = 160.0,
+  }) {
+    final nFrames = (data.length - kWin) ~/ hop;
+    if (nFrames < 4) return (<double>[], 0.0);
+    final window = List<double>.generate(kWin, (i) {
+      return 0.5 * (1 - math.cos(2 * math.pi * i / (kWin - 1)));
+    });
+    const half = kWin ~/ 2;
+    // 频率 < cutHz 的最高 bin 索引（bin 频率 = b * sr / kWin）
+    final maxBin = math.max(1, math.min(half, (cutHz * kWin / sr).ceil()));
+    final frame = List<double>.filled(kWin, 0.0);
+    final prevMag = List<double>.filled(half, 0.0);
+    final onset = List<double>.filled(nFrames, 0.0);
+    var fracSum = 0.0;
+    for (int f = 0; f < nFrames; f++) {
+      final start = f * hop;
+      for (int i = 0; i < kWin; i++) {
+        frame[i] = data[start + i] * window[i];
+      }
+      final spec = fft(frame);
+      double flux = 0, bandSum = 0, totalSum = 0;
+      for (int b = 0; b < half; b++) {
+        final mag = spec[b].magnitude;
+        totalSum += mag;
+        if (b < maxBin) {
+          final d = mag - prevMag[b];
+          prevMag[b] = mag;
+          bandSum += mag;
+          if (d > 0) flux += d;
+        }
+      }
+      onset[f] = bandSum > 1e-9 ? flux / bandSum : 0.0;
+      fracSum += totalSum > 1e-9 ? bandSum / totalSum : 0.0;
+    }
+    return (onset, fracSum / nFrames);
+  }
+
+
   static const int kTempoWin = 256;
   static const int kTempoHop = 32;
   static const int kTempoNfft = 512;
@@ -1187,6 +1237,102 @@ class BpmAnalyzer {
 
       // 4) 起音峰圆周直方图统计投票定相位 + 局部峰吸附 → 拍点
       final phase = _peakClusterPhase(onset, bpm, sampleRate);
+      final beats = _snappedBeats(onset, bpm, sampleRate, phase0: phase);
+      if (beats.isEmpty) {
+        return const BpmResult(bpm: null, confidence: 0.0, error: '无法跟踪整曲拍点');
+      }
+
+      // 5) 下拍对齐 + 6) grid/snap 时间轴（复用公共拍点时间轴工具）
+      final startFrame = _downbeatAlign(onset, beats);
+      final beatMaps =
+          _buildBeatMaps(onset, bpm, startFrame: startFrame, total: fullDuration);
+      final grid = beatMaps['grid'] ?? <double>[];
+      final confidence = _confidence(onset, bpm, grid);
+      final reliability =
+          _phaseReliability(onset, bpm, grid.isNotEmpty ? grid.first : 0.0);
+
+      return BpmResult(
+        bpm: bpm,
+        confidence: confidence,
+        duration: fullDuration,
+        beatOffset: grid.isNotEmpty ? grid.first : null,
+        beatTimes: grid,
+        beatMaps: beatMaps,
+        phaseReliability: reliability,
+      );
+    } catch (e) {
+      return BpmResult(bpm: null, confidence: 0.0, error: '节拍检测失败: $e');
+    }
+  }
+
+  // ---------- 算法 4：自相关估拍 + 低频（底鼓）频带能量最大化定相位（v0.1.0+63） ----------
+  // 与算法 3 互补的「踢鼓锚定」路线：
+  //   · 起音/BPM = 全频段谱通量 + 自相关 + 对数正态先验（同算法 3 的稳健 BPM 路径，
+  //               真实曲目 9/11，与 librosa 蓝本 / tempogram 持平）
+  //   · 相位     = 与算法 3 的全频峰圆周直方图不同：用 <160Hz 低频频带谱通量
+  //               （底鼓/低音打击）做能量和最大化，把首拍锚到 kick 上。
+  //   · 拍点     = 组合网格 + ±12% 局部峰吸附（复用公共工具）
+  // 真实曲目实测 9/11（失败的两首为倍速歧义曲，librosa 真值本身取半速）。
+  /// 算法 4 完整管线入口。
+  static BpmResult analyzeBassKickPcm(
+    List<double> samples, {
+    required int sampleRate,
+  }) {
+    if (samples.length < sampleRate * 2) {
+      return const BpmResult(
+        bpm: null,
+        confidence: 0.0,
+        error: '音频过短，无法可靠检测 BPM',
+      );
+    }
+    final maxLen = sampleRate * 60;
+    final data = samples.length > maxLen ? samples.sublist(0, maxLen) : samples;
+    final fullDuration = samples.length / sampleRate;
+    try {
+      // 1) 全频段谱通量起音（估 BPM 用）
+      final onset = _fluxOnset(data, sampleRate);
+      if (onset.length < 8) {
+        return const BpmResult(
+          bpm: null,
+          confidence: 0.0,
+          error: '音频有效起音过少，无法可靠检测 BPM',
+        );
+      }
+      var anyEnergy = false;
+      for (final v in onset) {
+        if (v > 0) {
+          anyEnergy = true;
+          break;
+        }
+      }
+      if (!anyEnergy) {
+        return const BpmResult(bpm: null, confidence: 0.0, error: '未检测到有效起音');
+      }
+
+      // 2) 起音包络自相关 + 对数正态先验 → 粗估 BPM
+      final ac = _autocorrelate(onset);
+      final coarse = _tempoFromAC(ac, sampleRate);
+      if (coarse <= 0) {
+        return const BpmResult(bpm: null, confidence: 0.0, error: '无法可靠检测 BPM');
+      }
+
+      // 3) 抛物线细化 + 自相关滞后强度八度消歧
+      final refined = _refineTempo(ac, coarse);
+      final (bpm, _) = _octaveCorrect(ac, refined);
+      if (bpm <= 0) {
+        return const BpmResult(bpm: null, confidence: 0.0, error: '无法可靠检测 BPM');
+      }
+
+      // 4) 低频（<160Hz 底鼓）频带起音 + 能量和最大化定相位 → 拍点
+      final frameRate = sampleRate / kHop;
+      var period = (60.0 * frameRate / bpm).round();
+      if (period < 4) period = 4;
+      final (kick, lowFrac) = _bandFluxOnset(data, sampleRate, cutHz: 160.0);
+      // 低频能量占比不足（纯合成哒哒声等 <8%）时，kick 相位是零值平局/噪声，
+      // 相位不可靠 → 回退到全频段峰投票相位（与算法 3 一致）。
+      final phase = lowFrac > 0.08
+          ? _energyPhase(kick, math.min(period, math.max(4, kick.length - 1)))
+          : _peakClusterPhase(onset, bpm, sampleRate);
       final beats = _snappedBeats(onset, bpm, sampleRate, phase0: phase);
       if (beats.isEmpty) {
         return const BpmResult(bpm: null, confidence: 0.0, error: '无法跟踪整曲拍点');
