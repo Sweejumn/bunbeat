@@ -92,7 +92,8 @@ class BpmAnalyzer {
   ///   2 = FourierTempogram + PLP（全频谱通量 + 频域估拍）—— v0.1.0+61 起默认
   ///   3 = 自相关估拍 + 起音峰圆周直方图定相位（统计相位，无 DP）—— v0.1.0+62 起默认
   ///   4 = 自相关估拍 + 低频（底鼓）频带能量最大化定相位 —— v0.1.0+63 起默认
-  static const int kActiveAlgorithm = 4;
+  ///   5 = 稳健 BPM + Ellis 动态规划整曲拍点（DP 相位）—— v0.1.0+64 起默认
+  static const int kActiveAlgorithm = 5;
 
   /// 对外统一入口：按当前版本选中的算法分析（纯 Dart，无外部依赖）。
   static BpmResult analyzePcm(
@@ -107,8 +108,10 @@ class BpmAnalyzer {
       case 3:
         return analyzePeakClusterPcm(samples, sampleRate: sampleRate);
       case 4:
-      default:
         return analyzeBassKickPcm(samples, sampleRate: sampleRate);
+      case 5:
+      default:
+        return analyzeDpBeatsPcm(samples, sampleRate: sampleRate);
     }
   }
 
@@ -1334,6 +1337,96 @@ class BpmAnalyzer {
           ? _energyPhase(kick, math.min(period, math.max(4, kick.length - 1)))
           : _peakClusterPhase(onset, bpm, sampleRate);
       final beats = _snappedBeats(onset, bpm, sampleRate, phase0: phase);
+      if (beats.isEmpty) {
+        return const BpmResult(bpm: null, confidence: 0.0, error: '无法跟踪整曲拍点');
+      }
+
+      // 5) 下拍对齐 + 6) grid/snap 时间轴（复用公共拍点时间轴工具）
+      final startFrame = _downbeatAlign(onset, beats);
+      final beatMaps =
+          _buildBeatMaps(onset, bpm, startFrame: startFrame, total: fullDuration);
+      final grid = beatMaps['grid'] ?? <double>[];
+      final confidence = _confidence(onset, bpm, grid);
+      final reliability =
+          _phaseReliability(onset, bpm, grid.isNotEmpty ? grid.first : 0.0);
+
+      return BpmResult(
+        bpm: bpm,
+        confidence: confidence,
+        duration: fullDuration,
+        beatOffset: grid.isNotEmpty ? grid.first : null,
+        beatTimes: grid,
+        beatMaps: beatMaps,
+        phaseReliability: reliability,
+      );
+    } catch (e) {
+      return BpmResult(bpm: null, confidence: 0.0, error: '节拍检测失败: $e');
+    }
+  }
+
+  // ---------- 算法 5：稳健 BPM + Ellis 动态规划拍点（DP 相位，v0.1.0+64） ----------
+  // 与算法 1–4 互补的「DP 追踪」路线：
+  //   · BPM = 全频段谱通量 + 自相关 + 对数正态先验（同算法 3/4 的稳健路径，
+  //           真实曲目 9/11；所有替代 tempo 特征 —— 低频/包络/子带 —— 都实测
+  //           会把 Chronomia 这类快拍拉到半速，故沿用全频段谱通量寻优）
+  //   · 相位 = 与算法 3 的统计峰投票 / 算法 4 的 kick 能量不同：用 Ellis(2007)
+  //           动态规划在起音包络上全局追踪整曲拍点（转移罚项紧贴节拍周期），
+  //           相位由全局最优回溯决定，整曲不漂移、对间歇/弱起音更稳。
+  //   · 拍点 = DP 拍点 → 下拍对齐 → grid/snap（复用公共工具）
+  // 相比算法 1 的 mel+DP：起音与 BPM 走全频段谱通量稳健路径（算法 1 的真曲
+  // 8/11 瓶颈在 mel 自相关 tempo 而非 DP），DP 相位则承接该稳健 BPM。
+  /// 算法 5 完整管线入口。
+  static BpmResult analyzeDpBeatsPcm(
+    List<double> samples, {
+    required int sampleRate,
+  }) {
+    if (samples.length < sampleRate * 2) {
+      return const BpmResult(
+        bpm: null,
+        confidence: 0.0,
+        error: '音频过短，无法可靠检测 BPM',
+      );
+    }
+    final maxLen = sampleRate * 60;
+    final data = samples.length > maxLen ? samples.sublist(0, maxLen) : samples;
+    final fullDuration = samples.length / sampleRate;
+    try {
+      // 1) 全频段谱通量起音
+      final onset = _fluxOnset(data, sampleRate);
+      if (onset.length < 8) {
+        return const BpmResult(
+          bpm: null,
+          confidence: 0.0,
+          error: '音频有效起音过少，无法可靠检测 BPM',
+        );
+      }
+      var anyEnergy = false;
+      for (final v in onset) {
+        if (v > 0) {
+          anyEnergy = true;
+          break;
+        }
+      }
+      if (!anyEnergy) {
+        return const BpmResult(bpm: null, confidence: 0.0, error: '未检测到有效起音');
+      }
+
+      // 2) 自相关 + 对数正态先验 → 粗估 BPM
+      final ac = _autocorrelate(onset);
+      final coarse = _tempoFromAC(ac, sampleRate);
+      if (coarse <= 0) {
+        return const BpmResult(bpm: null, confidence: 0.0, error: '无法可靠检测 BPM');
+      }
+
+      // 3) 抛物线细化 + 自相关滞后强度八度消歧
+      final refined = _refineTempo(ac, coarse);
+      final (bpm, _) = _octaveCorrect(ac, refined);
+      if (bpm <= 0) {
+        return const BpmResult(bpm: null, confidence: 0.0, error: '无法可靠检测 BPM');
+      }
+
+      // 4) Ellis 动态规划整曲拍点（决定相位，全局最优回溯）
+      final beats = _beatTrackDP(onset, bpm, sampleRate);
       if (beats.isEmpty) {
         return const BpmResult(bpm: null, confidence: 0.0, error: '无法跟踪整曲拍点');
       }
