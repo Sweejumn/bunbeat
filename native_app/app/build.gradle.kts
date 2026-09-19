@@ -22,7 +22,7 @@ android {
         // 与 Flutter 版并存安装（不同 applicationId），互不影响用户已有数据。
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
+        versionCode = 2
         versionName = "0.2.0"
     }
 

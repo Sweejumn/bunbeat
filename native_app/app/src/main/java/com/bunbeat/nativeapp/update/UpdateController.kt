@@ -80,7 +80,9 @@ class UpdateController(
         if (checking) return
         checking = true
         statusText = null
-        val res = UpdateService.check(currentVersionFull())
+        // 网络请求必须切到 IO：调用方（MainActivity/页面）跑在主线程上，
+        // 直接在主线程序跑 HttpURLConnection 会抛 NetworkOnMainThreadException。
+        val res = withContext(Dispatchers.IO) { UpdateService.check(currentVersionFull()) }
         checking = false
         when (res.status) {
             UpdateStatus.AVAILABLE -> {
