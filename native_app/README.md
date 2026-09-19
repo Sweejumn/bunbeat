@@ -80,6 +80,22 @@ cd native_app
 
 对比数据留在 `research_tmp/native_parity/`（`dart_cache_v5/`、`native_cache/`、`compare_mp3.json`）。
 
+⚠️ 注意缓存 id 依赖「路径字符串」本身：用系统文件夹选择器（SAF）选中同一个目录时，
+解析出来的路径是 `/storage/emulated/0/Music/...`，而直接填路径时可能是 `/sdcard/Music/...`
+（两者是同一个目录）。路径串不同 → hash 不同 → 分析缓存会对同一首歌存两份。
+Flutter 版也是同样的规则，做对比测试时要保证两边路径串一致。
+
+### 更新流程实测
+
+用一个临时 Release（已删除）在模拟器上完整跑过一遍：
+
+1. 启动 8 秒后静默自检 → 弹出「发现新版本 …」对话框（`立即更新` / `稍后`）；
+2. 点「立即更新」→ 下载到 `cacheDir/update/bunbeat-native-update.apk`（带进度）；
+3. 通过 `FileProvider` 交给系统安装器（实测唤起 `com.android.packageinstaller` 的安装界面）。
+
+另外验证过：原生版 Release 发成 pre-release 后，`releases/latest` 仍然指向 Flutter 版
+（`v0.1.0+66`），Flutter 版的更新通道不受影响。
+
 ## 移植契约
 
 并行移植期间的接口约定保留在 `PORT_CONTRACT.md`，便于后续扩展时保持模块边界一致；
