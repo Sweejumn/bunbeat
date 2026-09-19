@@ -27,3 +27,10 @@ Thumbs.db
 
 # --- Kotlin BPM port: build output ---
 kotlin_bpm/build/
+
+# --- Native (Kotlin/Compose) Android app: build output ---
+native_app/build/
+native_app/app/build/
+native_app/.gradle/
+native_app/local.properties
+native_app/.kotlin/
