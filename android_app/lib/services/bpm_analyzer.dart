@@ -97,6 +97,8 @@ class BpmAnalyzer {
   ///   3 = 自相关估拍 + 起音峰圆周直方图定相位（统计相位，无 DP）—— v0.1.0+62 起默认
   ///   4 = 自相关估拍 + 低频（底鼓）频带能量最大化定相位 —— v0.1.0+63 起默认
   ///   5 = 稳健 BPM + Ellis 动态规划整曲拍点（DP 相位）—— v0.1.0+64 起默认
+  ///   6 = 脉冲梳折叠（pulse-comb fold）：按拍周期把起音包络模周期折叠，
+  ///       量「落在单相位的起音能量占比」同时估 BPM 与相位—— v0.1.0+67 起默认
   static const int kActiveAlgorithm = 5;
 
   /// 对外统一入口：按当前版本选中的算法分析（纯 Dart，无外部依赖）。
@@ -114,8 +116,10 @@ class BpmAnalyzer {
       case 4:
         return analyzeBassKickPcm(samples, sampleRate: sampleRate);
       case 5:
-      default:
         return analyzeDpBeatsPcm(samples, sampleRate: sampleRate);
+      case 6:
+      default:
+        return analyzeCombFoldPcm(samples, sampleRate: sampleRate);
     }
   }
 
@@ -1530,6 +1534,229 @@ class BpmAnalyzer {
       final startFrame = _downbeatAlign(onset, beats);
       final beatMaps =
           _buildBeatMaps(onset, bpm, startFrame: startFrame, total: fullDuration);
+      final grid = beatMaps['grid'] ?? <double>[];
+      final confidence = _confidence(onset, bpm, grid);
+      final reliability =
+          _phaseReliability(onset, bpm, grid.isNotEmpty ? grid.first : 0.0);
+
+      return BpmResult(
+        bpm: bpm,
+        confidence: confidence,
+        duration: fullDuration,
+        beatOffset: grid.isNotEmpty ? grid.first : null,
+        beatTimes: grid,
+        beatMaps: beatMaps,
+        phaseReliability: reliability,
+      );
+    } catch (e) {
+      return BpmResult(bpm: null, confidence: 0.0, error: '节拍检测失败: $e');
+    }
+  }
+
+  // ---------- 算法 6：脉冲梳折叠（pulse-comb fold） ----------
+  // 基因在于：不依赖自相关（算法 1/5）、傅里叶 tempogram（算法 2）、
+  // 统计峰直方图（算法 3）、低频底鼓能量（算法 4），而是直接对候选拍周期
+  // 做「模周期折叠」——把起音包络按 beatPeriod 折叠成单周期直方图。
+  //
+  // 旧版测「最大相位 bin 能量 / 总能量」：对纯周期信号在整倍数周期处会把
+  // 能量劈成两半落在反相位（≈0.5），却仍被当作高共振 → 测成倍速/半速。
+  // 改版判据 = 「最优相位窗 ±12% 周期内的能量占比」：真实周期把几乎全部
+  // 脉冲能量收进单一相位窗（≈1），整倍数周期至多拿到一半（≈0.5）被压低。
+  // 该度量与 lag 无关，消除「bin 越多越吃亏」的结构偏差；再对共振曲线做
+  // 抛物线细化提升整数 lag 的分辨率；首拍相位由用户建议的「全曲最强一击
+  // 锚点 + 半周期内微调」决定，而非全局折叠平均。
+
+  /// 把起音按 lag 折叠成单周期相位直方图，返回「峰值相位高于全域均值的
+  /// 相对突出度」= (maxAvg - meanAvg) / meanAvg。均匀折叠 → 0，单一强相位 →
+  /// 大正值。对稀疏起音峰串，真实周期折叠出一个尖锐峰，整倍数周期劈成多个
+  /// 较低峰。与 lag 无关，避免小 lag 的能量集中偏差。
+  static double _combPhaseShare(List<double> onset, int lag) {
+    if (lag < 1 || onset.length < 4) return 0.0;
+    var total = 0.0;
+    for (final v in onset) {
+      total += v;
+    }
+    if (total <= 1e-12) return 0.0;
+    final bin = List<double>.filled(lag, 0.0);
+    for (int i = 0; i < onset.length; i++) {
+      bin[i % lag] += onset[i];
+    }
+    final meanAvg = total / lag; // 全域每相位平均能量
+    if (meanAvg <= 1e-12) return 0.0;
+    var mx = bin[0];
+    for (var p = 1; p < lag; p++) {
+      if (bin[p] > mx) mx = bin[p];
+    }
+    return (mx - meanAvg) / meanAvg; // 峰突出度（0..~lag-1）
+  }
+
+  /// 抛物线细化：在 [lag-1, lag, lag+1] 三点共振强度上取顶点的亚帧 lag。
+  static double _refineLag(Map<int, double> res, int lag) {
+    final y0 = res[lag - 1] ?? 0.0;
+    final y1 = res[lag] ?? 0.0;
+    final y2 = res[lag + 1] ?? 0.0;
+    final denom = y0 - 2 * y1 + y2;
+    if (denom.abs() < 1e-12) return lag.toDouble();
+    final d = 0.5 * (y0 - y2) / denom;
+    return (lag + d).clamp((lag - 1).toDouble(), (lag + 1).toDouble());
+  }
+
+  /// 对数正态先验权重（中心 120 BPM，轻微，仅弱化极端倍速）。
+  static double _combPrior(double bpm) =>
+      math.exp(-0.5 * math.pow(math.log(bpm / 120.0) / math.ln2 / 1.6, 2).toDouble());
+
+  /// 40–320 BPM（lag 域）扫描相位窗占比（辅以先验），抛物线细化，再在
+  /// 60–200 BPM 内的相邻整数倍候选里择最优。返回 (bpm, 首拍帧号)。
+  static (double, int) _combFoldTempo(List<double> onset, int sr) {
+    final frameRate = sr / kHop;
+    const minBpm = 40.0;
+    const maxBpm = 320.0;
+
+    // 稀疏化：真实起音是连续宽带能量，直接折叠会在任意短周期处抬高占比。
+    // 只保留局部起音峰（真脉冲串的瞬态），对峰串折叠才是有效的周期度量。
+    final peak = List<double>.filled(onset.length, 0.0);
+    for (int i = 1; i < onset.length - 1; i++) {
+      if (onset[i] >= onset[i - 1] && onset[i] > onset[i + 1]) {
+        peak[i] = onset[i];
+      }
+    }
+    peak[0] = onset[0];
+    peak[onset.length - 1] = onset[onset.length - 1];
+
+    double bestShare = -1.0;
+    int bestLag = 1;
+    final resAt = <int, double>{};
+    for (int lag = 1; lag < onset.length; lag++) {
+      final bpm = 60.0 * frameRate / lag;
+      if (bpm < minBpm || bpm > maxBpm) continue;
+      final share = _combPhaseShare(peak, lag);
+      resAt[lag] = share;
+      final sc = share * _combPrior(bpm);
+      if (sc > bestShare) {
+        bestShare = sc;
+        bestLag = lag;
+      }
+    }
+    if (bestShare <= 1e-9) return (-1, 0);
+
+    final refinedLag = _refineLag(resAt, bestLag);
+    double lagForBpm(double bpm) => 60.0 * frameRate / bpm;
+    double cand(double bpm) {
+      final lag = math.max(1, lagForBpm(bpm).round());
+      return _combPhaseShare(peak, lag) * _combPrior(bpm);
+    }
+
+    // 在 60–200 内比较当前 refined 的相邻整数倍（1x/2x/0.5x/1.5x/0.667x）
+    var best = 60.0 * frameRate / refinedLag;
+    double bestScore = -1.0;
+    for (final bpm in <double>[
+      best,
+      best * 2.0,
+      best / 2.0,
+      best * 1.5,
+      best / 1.5,
+    ]) {
+      if (bpm < 60 || bpm > 200) continue;
+      final s = cand(bpm);
+      if (s > bestScore) {
+        bestScore = s;
+        best = bpm;
+      }
+    }
+    while (best < 60 && best * 2 <= 300) {
+      best *= 2.0;
+    }
+    while (best > 200) {
+      best /= 2.0;
+    }
+    best = double.parse(best.toStringAsFixed(6));
+    final phase = _combAnchorPhase(onset, best);
+    return (best, phase);
+  }
+
+  /// 相位：以「全曲最强局部起音峰」为最可靠的一击锚点，再在 ±半周期内
+  /// 微调相位，使落在拍相位窗（±12%）内的起音总能量最大。返回首拍帧号
+  /// （0..periodLag-1）。用户建议：先找最可靠的那一拍再填充，而非全局平均。
+  static int _combAnchorPhase(List<double> onset, double bpm) {
+    if (onset.length < 4 || bpm <= 0) return 0;
+    final frameRate = kSampleRate / kHop;
+    final periodLag = math.max(1, (frameRate * 60.0 / bpm).round());
+    if (periodLag < 2) return 0;
+    var anchor = 0;
+    var bestE = -1.0;
+    for (int i = 1; i < onset.length - 1; i++) {
+      if (onset[i] >= onset[i - 1] &&
+          onset[i] > onset[i + 1] &&
+          onset[i] > bestE) {
+        bestE = onset[i];
+        anchor = i;
+      }
+    }
+    if (bestE <= 0) return 0;
+    final center = anchor % periodLag;
+    final halfWin = math.max(1, periodLag ~/ 2);
+    final winFrames = math.max(1, (0.12 * periodLag).round());
+    var bestPhase = center;
+    var bestScore = -1.0;
+    for (int d = -halfWin; d <= halfWin; d++) {
+      final phase = ((center + d) % periodLag + periodLag) % periodLag;
+      double score = 0.0;
+      for (int i = 0; i < onset.length; i++) {
+        final hop = (i - phase) % periodLag;
+        if (math.min(hop, periodLag - hop) <= winFrames) {
+          score += onset[i];
+        }
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        bestPhase = phase;
+      }
+    }
+    return bestPhase;
+  }
+
+  /// 算法 6 对外入口：全频段谱通量起音 + 脉冲梳折叠同时估 BPM 与相位。
+  static BpmResult analyzeCombFoldPcm(
+    List<double> samples, {
+    required int sampleRate,
+  }) {
+    if (samples.length < sampleRate * 2) {
+      return const BpmResult(
+        bpm: null,
+        confidence: 0.0,
+        error: '音频过短，无法可靠检测 BPM',
+      );
+    }
+    final maxLen = sampleRate * 60;
+    final data = samples.length > maxLen ? samples.sublist(0, maxLen) : samples;
+    final fullDuration = samples.length / sampleRate;
+    try {
+      final onset = _fluxOnset(data, sampleRate);
+      if (onset.length < 8) {
+        return const BpmResult(
+          bpm: null,
+          confidence: 0.0,
+          error: '音频有效起音过少，无法可靠检测 BPM',
+        );
+      }
+      var anyEnergy = false;
+      for (final v in onset) {
+        if (v > 0) {
+          anyEnergy = true;
+          break;
+        }
+      }
+      if (!anyEnergy) {
+        return const BpmResult(bpm: null, confidence: 0.0, error: '未检测到有效起音');
+      }
+
+      final (bpm, phase) = _combFoldTempo(onset, sampleRate);
+      if (bpm <= 0) {
+        return const BpmResult(bpm: null, confidence: 0.0, error: '无法可靠检测 BPM');
+      }
+
+      final beatMaps =
+          _buildBeatMaps(onset, bpm, startFrame: phase, total: fullDuration);
       final grid = beatMaps['grid'] ?? <double>[];
       final confidence = _confidence(onset, bpm, grid);
       final reliability =

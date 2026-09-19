@@ -24,3 +24,6 @@ backend/scripts/_debug_*.py
 .DS_Store
 Thumbs.db
 *.tmp
+
+# --- Kotlin BPM port: build output ---
+kotlin_bpm/build/
