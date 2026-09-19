@@ -34,8 +34,10 @@ kotlin_bpm/
 ├─ tools/             ← 仅为验证服务的 harness，不属于移植库
 │  ├─ ParityMain.kt   裸 PCM 入口：对每个 WAV 跑 6 个引擎，输出与 Dart golden 同构的 JSON
 │  ├─ WavProbeMain.kt App 入口探针：调用 analyzeWavFile，覆盖立体声/24bit/坏容器
+│  ├─ CliMain.kt      命令行前端（release 里的 bunbeat-bpm.jar 就用它当 Main-Class）
 │  └─ compare.py      数值比对器（逐字段相对偏差 + 是否逐位相同）
 ├─ build.ps1          编译（IntelliJ 自带 kotlinc，无需 Gradle）
+├─ package_release.ps1  打 release 产物：可运行 fat jar + 源码 zip + Windows 启动脚本
 └─ run_parity.ps1     编译 → 跑 manifest → 与 Dart golden 数值比对
 ```
 
@@ -81,6 +83,36 @@ java -cp "<IDEA>\plugins\Kotlin\kotlinc\lib\*.jar" `
 .\run_parity.ps1 -SkipBuild -Manifest ...\manifest_third.json   -Out ...\actual_kotlin_third.json   -Expected ...\expected_dart_third.json
 .\run_parity.ps1 -SkipBuild -Main com.bunbeat.bpm.WavProbeMainKt -Manifest ...\probe.json -Out ...\actual_kotlin_probe.json -Expected ...\expected_dart_probe.json
 ```
+
+---
+
+## 3.5 命令行版（release 产物）
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+cd C:\Users\123\Desktop\muzrun\kotlin_bpm
+.\package_release.ps1 -Version 1.0.0
+# -> build\bunbeat-bpm.jar（1.9 MB 自带 kotlin-stdlib 的可运行 jar）
+# -> build\bunbeat-bpm-1.0.0-src.zip（源码 + 工具 + 文档）
+# -> build\run-bunbeat-bpm.bat（Windows 启动脚本，可把 .wav 直接拖上去）
+```
+
+用法（只需 JDK 21，无需 Kotlin、无需 Gradle）：
+
+```powershell
+java -jar build\bunbeat-bpm.jar -b  "music.wav"        # 文本表格 + 前 16 个拍点
+java -jar build\bunbeat-bpm.jar -j  "music.wav"        # JSON
+java -jar build\bunbeat-bpm.jar -d  "D:\Music" -q      # 递归扫目录，只输出 path<TAB>bpm
+java -jar build\bunbeat-bpm.jar --version
+```
+
+非 ASCII 文件名在 GBK 控制台下会被替换成 `?`（JVM 用的是控制台代码页），
+`run-bunbeat-bpm.bat` 已经带上 `chcp 65001` 与 `-Dstdout.encoding=UTF-8` 处理这个问题；
+直接敲 `java -jar` 的话自己加这两个参数即可。
+
+> 注意：这是**引擎**，不是播放器，只认 WAV（PCM）。
+> App 里能读 MP3/FLAC 是因为先用 ffmpeg-kit 解码成了 22050 Hz 单声道 WAV；
+> 想直接用别的格式，先转成 WAV 再喂给它。
 
 ---
 
