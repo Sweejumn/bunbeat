@@ -374,3 +374,63 @@ data class ReleaseInfo(val version: String, val notes: String, val apkUrl: Strin
 5. 编译命令（主控统一执行，agent 不要自己跑）：
    `cd native_app; .\gradlew.bat :app:compileDebugKotlin --console=plain`
 
+## 6. UI 规范（v0.3：对齐 Shizuku 的 Material 3 观感）
+
+参考实现：`C:\Users\123\Desktop\muzrun\research_tmp\shizuku`（RikkaApps/Shizuku 源码）。
+尺寸/结构都从它的 `manager` 模块对出来，不要自己发明数值。
+
+### 已有公共组件（`com.bunbeat.nativeapp.ui`，`ui/Components.kt`）
+
+```kotlin
+val kCardCorner = RoundedCornerShape(28.dp)          // Shizuku cardCornerRadius=28dp
+val kScreenHorizontalPadding = 16.dp
+
+@Composable fun BunbeatTopBar(
+    title: String,
+    modifier: Modifier = Modifier,
+    onBack: (() -> Unit)? = null,
+    scrollBehavior: TopAppBarScrollBehavior? = null,
+    actions: @Composable RowScope.() -> Unit = {},
+)
+@Composable fun rememberBunbeatScrollBehavior(): TopAppBarScrollBehavior
+
+@Composable fun CardIconBadge(icon: ImageVector, modifier: Modifier = Modifier,
+    container: Color = colorScheme.primaryContainer,
+    content: Color = colorScheme.onPrimaryContainer)
+
+@Composable fun HomeCard(icon: ImageVector, title: String, modifier: Modifier = Modifier,
+    summary: String? = null, onClick: (() -> Unit)? = null,
+    iconContainer: Color = colorScheme.primaryContainer,
+    iconContent: Color = colorScheme.onPrimaryContainer,
+    content: (@Composable ColumnScope.() -> Unit)? = null)
+
+@Composable fun FilledActionCard(modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null, content: @Composable ColumnScope.() -> Unit)
+
+@Composable fun BunbeatListRow(title: String, modifier: Modifier = Modifier,
+    summary: String? = null, leading: (@Composable () -> Unit)? = null,
+    trailing: (@Composable () -> Unit)? = null, onClick: (() -> Unit)? = null)
+
+@Composable fun SectionLabel(text: String, modifier: Modifier = Modifier)
+```
+
+### 硬性要求
+
+1. **顶栏**：页面不要再自己手写 `Surface + Row` 的 56dp 顶栏，一律用 `BunbeatTopBar(...)`；
+   子页传 `onBack`。滚动容器接 `scrollBehavior`（`Modifier.nestedScroll(behavior.nestedScrollConnection)`）
+   才能得到「滚动才升起」的效果。
+2. **卡片**：功能入口/信息块用 `HomeCard`（28dp 圆角 + `surfaceContainerHighest` + 16/20 内边距 +
+   圆形图标徽章）；页面里最主要的那个动作（比如推荐页的「变速并播放」）用 `FilledActionCard`
+   （28dp 圆角 + `secondaryContainer` + 24dp 内边距）。
+3. **列表行**：`BunbeatListRow`（≥64dp 高、左右 16dp、图标 32dp、图标与文字 24dp 间距）。
+   歌曲列表仍用 `LazyColumn`，行内容可以自绘，但高度/左右边距/字号要对齐这个规格。
+4. **页面外边距**：左右 `kScreenHorizontalPadding`（16dp），卡片之间垂直 4dp。
+5. **颜色**：不要写死颜色值，一律取 `MaterialTheme.colorScheme.*`
+   （`surfaceContainerHighest` = 卡片底、`primaryContainer/onPrimaryContainer` = 图标徽章、
+   `secondaryContainer/onSecondaryContainer` = 行动卡、`onSurfaceVariant` = 副标题）。
+6. **主题是动态的**：Android 12+ 默认跟随壁纸取色（`SettingsStore.useSystemColor`，默认 true），
+   所以任何写死的 rgba 颜色都会在动态取色下不协调 —— 这也是第 5 条的原因。
+7. `SettingsStore` 新增：`useSystemColor: Boolean`（默认 true）、`setUseSystemColor(on)`；
+   注意 `setSeed(c)` 会自动把 `useSystemColor` 置 false（两者互斥：选预设色 = 不跟随壁纸）。
+
+

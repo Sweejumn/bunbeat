@@ -35,6 +35,12 @@ class SettingsStore(private val prefs: Prefs) {
         private const val PREF_TWO_DECIMALS = "runbpm.bpmTwoDecimals"
 
         /**
+         * 是否跟随壁纸动态取色（Material You）。
+         * 键名与 Shizuku 的 `use_system_color` 语义一致，默认开（Android 12+ 生效）。
+         */
+        private const val PREF_USE_SYSTEM_COLOR = "runbpm.useSystemColor"
+
+        /**
          * 解析 `#RRGGBB`（对应 Dart `ThemeController._parseColor`）：
          * 去掉第一个 `#` 后按十六进制解析，失败返回 null；成功则强制不透明
          * （Dart 是 `Color(0xFF000000 | v)`，只取低 24 位颜色分量）。
@@ -77,6 +83,10 @@ class SettingsStore(private val prefs: Prefs) {
     var bpmTwoDecimals by mutableStateOf(true)
         private set
 
+    /** 是否跟随壁纸动态取色，默认开启（Android 12 以下无效果）。 */
+    var useSystemColor by mutableStateOf(true)
+        private set
+
     /** 读取持久化设置（对应 Dart `ThemeController.load` + `BpmDisplayController.load`）。 */
     fun load() {
         themeMode = when (prefs.getString(PREF_MODE)) {
@@ -90,6 +100,7 @@ class SettingsStore(private val prefs: Prefs) {
             parseColor(colorStr)?.let { seed = it }
         }
         bpmTwoDecimals = prefs.getBool(PREF_TWO_DECIMALS, true)
+        useSystemColor = prefs.getBool(PREF_USE_SYSTEM_COLOR, true)
     }
 
     @kotlin.jvm.JvmName("applyThemeMode")
@@ -111,6 +122,19 @@ class SettingsStore(private val prefs: Prefs) {
         // Dart 的 setSeed 不判重，重复设置同一色值也照写，这里保持一致。
         seed = c
         prefs.putString(PREF_COLOR, colorToString(c))
+        // 手动选预设色 = 明确表示不用壁纸色（Shizuku 的交互也是二选一）。
+        setUseSystemColor(false)
+    }
+
+    /**
+     * 开关动态取色。选预设色时会被自动关掉；关掉后立刻回落到 [seed] 生成的配色，
+     * 所以设置页里两者是「互斥的一行 + 一排色块」。
+     */
+    @kotlin.jvm.JvmName("applyUseSystemColor")
+    fun setUseSystemColor(on: Boolean) {
+        if (useSystemColor == on) return
+        useSystemColor = on
+        prefs.putBool(PREF_USE_SYSTEM_COLOR, on)
     }
 
     fun setTwoDecimals(on: Boolean) {

@@ -51,6 +51,25 @@ native_app/
   装出第二个 App。发成 pre-release 可以让 `releases/latest` 始终指向 Flutter 版
   （Kotlin 引擎版 `kotlin-bpm-v1.0.0` 出于同样理由也是 pre-release）。
 
+## 界面：对齐 Shizuku 的 Material 3 观感
+
+v0.3 起界面按 [RikkaApps/Shizuku](https://github.com/RikkaApps/Shizuku) 的 `manager` 模块重做，
+尺寸/结构都是从它源码里逐个对出来的（对照表见 `PORT_CONTRACT.md` 第 6 节）：
+
+- **Material You 动态取色**：Android 12+ 默认跟随壁纸（对应 Shizuku 的
+  `ThemeOverlay.DynamicColors.*` + `use_system_color` 开关），设置页可一键关掉，
+  关掉后回落到 9 种预设主题色（选预设色也会自动关掉动态取色）。
+- **首页改成卡片流**：不再有底部 Tab，首页是一屏「卡片」——曲库状态卡 / 播放状态卡 /
+  「开始跑步」行动卡 / 归档 / 使用说明 / 设置 / 关于；其余页面都是从首页推入的子页，
+  带返回箭头的 M3 顶栏（对应 Shizuku 的 `AppBarLayout(liftOnScroll) + MaterialToolbar`，
+  滚动才升起容器色）。
+- **卡片规格**（`ui/Components.kt`）：28dp 圆角、`surfaceContainerHighest` 底、16/20 内边距、
+  圆形图标徽章（40dp 圆 + 24dp 图标，`primaryContainer`/`onPrimaryContainer`）；
+  页面主操作用「填充行动卡」（28dp 圆角 + `secondaryContainer` + 24dp 内边距）。
+- **列表行规格**：≥64dp 高、左右 16dp、图标与文字 24dp 间距、标题 bodyLarge、
+  副标题 bodyMedium/14sp + `onSurfaceVariant`。
+- 所有颜色都取 `MaterialTheme.colorScheme.*`，不再写死 rgba —— 否则在动态取色下会脏。
+
 ## 构建
 
 ```powershell

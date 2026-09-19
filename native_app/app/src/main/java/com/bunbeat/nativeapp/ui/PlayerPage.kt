@@ -94,6 +94,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -159,9 +160,11 @@ private fun computeTapBpm(taps: List<Double>): Double? {
  * （封面卡片 / 拍点标尺 / 节拍模式与打拍校准 / 节拍器面板）→ 底部常驻播放控制条。
  */
 @Composable
-fun PlayerPage(app: AppState) {
+fun PlayerPage(app: AppState, onBack: () -> Unit = {}) {
     val state = remember(app) { PlayerPageState(app) }
     var showHelp by remember { mutableStateOf(false) }
+    // 顶栏「滚动才升起」（对应 Shizuku 的 liftOnScroll）。
+    val behavior = rememberBunbeatScrollBehavior()
 
     // 对应 Dart `initState` 里的异步 `_loadPrefs()`（默认值先上，读盘到位后覆盖）。
     LaunchedEffect(Unit) { state.loadPrefs() }
@@ -199,7 +202,12 @@ fun PlayerPage(app: AppState) {
     if (queue.items.isEmpty() || current == null) {
         // 对应 Dart `build` 的 `!queue.hasQueue || current == null` 分支。
         Column(modifier = Modifier.fillMaxSize()) {
-            PlayerTopBar(showActions = false, onHelp = { showHelp = true }, onSettings = { app.nav.openSettings() })
+            PlayerTopBar(
+                onBack = onBack,
+                showActions = false,
+                onHelp = { showHelp = true },
+                onSettings = { app.nav.openSettings() },
+            )
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("到「推荐」页选择运动模式并开始播放")
             }
@@ -218,9 +226,11 @@ fun PlayerPage(app: AppState) {
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             PlayerTopBar(
+                onBack = onBack,
                 showActions = true,
                 onHelp = { showHelp = true },
                 onSettings = { app.nav.openSettings() },
+                scrollBehavior = behavior,
             )
         },
         // 底部固定控制条：进度 + 播放模式 + 上一首 / 播放暂停 / 下一首 + 播放列表入口，
@@ -237,11 +247,12 @@ fun PlayerPage(app: AppState) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .nestedScroll(behavior.nestedScrollConnection)
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp),
             ) {
                 // 歌曲封面 / 标题 / BPM 信息（对应 Dart 的 Card + Padding(16) + Row）。
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(modifier = Modifier.fillMaxWidth(), shape = kCardCorner) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -289,31 +300,24 @@ fun PlayerPage(app: AppState) {
 /**
  * 顶部工具栏（对应 Dart 播放页的 `AppBar`：标题「播放」+ 使用说明 / 设置）。
  *
- * 高度取 56dp 与 Flutter 的 AppBar 一致（material3 的 TopAppBar 是 64dp）；
+ * v0.3 起改用公共的 [BunbeatTopBar]（M3 TopAppBar，带返回箭头 + 滚动升起），
+ * 尺寸/配色对齐 Shizuku 的 `AppBarLayout + MaterialToolbar`。
  * 图标按钮的 tooltip 在 Compose 侧没有稳定 API，这里只保留 contentDescription（无障碍文案一致）。
- * [showActions] 对应 Dart 空队列分支的 AppBar（没有 actions）。
+ * [showActions] 对应空队列分支（没有 actions 时仍然显示返回）。
  */
 @Composable
 private fun PlayerTopBar(
+    onBack: () -> Unit,
     showActions: Boolean,
     onHelp: () -> Unit,
     onSettings: () -> Unit,
+    scrollBehavior: BunbeatScrollBehavior? = null,
 ) {
-    Surface(color = MaterialTheme.colorScheme.surface) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp)
-                .padding(start = 16.dp, end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "播放",
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.titleLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+    BunbeatTopBar(
+        title = "播放",
+        onBack = onBack,
+        scrollBehavior = scrollBehavior,
+        actions = {
             if (showActions) {
                 IconButton(onClick = onHelp) {
                     Icon(imageVector = Icons.Outlined.HelpOutline, contentDescription = "使用说明")
@@ -322,8 +326,8 @@ private fun PlayerTopBar(
                     Icon(imageVector = Icons.Outlined.Settings, contentDescription = "设置")
                 }
             }
-        }
-    }
+        },
+    )
 }
 
 /**

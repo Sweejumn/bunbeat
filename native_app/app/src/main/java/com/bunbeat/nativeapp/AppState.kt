@@ -19,6 +19,9 @@ import kotlinx.coroutines.launch
 
 /** 页面跳转动作：由 MainActivity 注入，页面一律通过 [AppState.nav] 跳转。 */
 class NavActions(
+    val openLibrary: () -> Unit,
+    val openRecommend: () -> Unit,
+    val openPlayer: () -> Unit,
     val openArchive: () -> Unit,
     val openSettings: () -> Unit,
     val openAbout: () -> Unit,

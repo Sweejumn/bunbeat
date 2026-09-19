@@ -2,11 +2,15 @@ package com.bunbeat.nativeapp.ui
 
 // 对应 Dart `ui/recommend_page.dart`。
 //
-// 页面结构：顶部工具栏（标题 + 使用说明 / 设置）+ 固定表头（选择 / 自动勾选 / 全选清空）
-// + 可滚动列表（运动模式选择器 + 推荐歌曲行）+ 底部常驻「变速并播放」按钮。
+// 页面结构（Shizuku 风格）：顶部 TopAppBar（返回 + 标题 + 使用说明 / 设置）
+// + 固定表头（选择 / 自动勾选 / 全选清空）+ 可滚动列表（运动模式卡 + 推荐歌曲行）
+// + 底部常驻「行动卡」形态的「变速并播放」。
+//
+// 导航结构：推荐页不再是底部 Tab，而是从首页卡片点进去的子页，所以需要 onBack。
 
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +18,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -29,11 +34,12 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -52,6 +58,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -64,16 +71,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
-// 封面缺省图标颜色（对应 Dart `Colors.grey`）。
-private val kArtworkGrey = Color(0xFF9E9E9E)
-
 /**
  * 运动模式与推荐页（对应 Dart `RecommendPage` / `_RecommendPageState`）。
  *
  * @param app 全局状态容器（等价 Dart 的 Provider：曲库 / 队列 / 播放器 / 设置 / 提示）
+ * @param onBack 返回上一页（本页是首页卡片进入的子页，不再是底部 Tab）
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RecommendPage(app: AppState) {
+fun RecommendPage(app: AppState, onBack: () -> Unit) {
     val library = app.library
 
     // Dart 是 `lib.recommend(target: lib.targetBpm)..sort(distance)`（context.watch 触发重建）；
@@ -87,32 +93,55 @@ fun RecommendPage(app: AppState) {
     val selected = remember { mutableStateListOf<String>() }
     var showHelp by remember { mutableStateOf(false) }
 
+    // Shizuku 的 AppBarLayout(liftOnScroll)：接到下方滚动容器上，滚动才升起容器色。
+    val behavior = rememberBunbeatScrollBehavior()
+
     // Dart `HelpDialog.show(context, section: HelpSection.recommend)`。
     if (showHelp) {
         HelpDialogContent(section = HelpSection.recommend, onDismiss = { showHelp = false })
     }
 
     Scaffold(
-        // 本页嵌在 HomePage 的 Scaffold 内容区里（外层已处理系统栏内边距），
-        // 这里把 contentWindowInsets 置零，避免底部播放条再被系统栏顶一次。
+        // 本页嵌在宿主 Scaffold 的内容区里（外层已处理系统栏内边距），
+        // 这里把 contentWindowInsets 置零，避免底部行动卡再被系统栏顶一次。
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            RecommendTopBar(
-                onHelp = { showHelp = true },
-                // Dart `Navigator.push(MaterialPageRoute(builder: (_) => SettingsPage()))`。
-                onSettings = { app.nav.openSettings() },
+            BunbeatTopBar(
+                title = "运动模式与推荐",
+                onBack = onBack,
+                scrollBehavior = behavior,
+                actions = {
+                    // 对应 Dart 推荐页 AppBar 的两个图标按钮。
+                    IconButton(onClick = { showHelp = true }) {
+                        Icon(imageVector = Icons.Outlined.HelpOutline, contentDescription = "使用说明")
+                    }
+                    IconButton(
+                        // Dart `Navigator.push(MaterialPageRoute(builder: (_) => SettingsPage()))`。
+                        onClick = { app.nav.openSettings() },
+                    ) {
+                        Icon(imageVector = Icons.Outlined.Settings, contentDescription = "设置")
+                    }
+                },
             )
         },
         bottomBar = {
-            // 底部常驻播放条：无论列表多长，按钮始终可见，无需滚动到底。
-            // Dart 还包了一层 SafeArea，native_app 侧由 HomePage 的 Scaffold 统一处理。
+            // 底部常驻行动卡：无论列表多长，按钮始终可见，无需滚动到底。
+            // 结构照 Shizuku `home_start_root.xml`：说明文字 + 整宽按钮，卡片本身做背景容器。
             if (selected.isNotEmpty()) {
                 Surface(color = MaterialTheme.colorScheme.surface) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 12.dp),
+                    FilledActionCard(
+                        modifier = Modifier.padding(
+                            start = kScreenHorizontalPadding,
+                            top = 8.dp,
+                            end = kScreenHorizontalPadding,
+                            bottom = 12.dp,
+                        ),
                     ) {
+                        Text(
+                            text = "已选 ${selected.size} 首 · 目标 ${app.settings.formatBpm(target)} BPM",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
                         // Dart 用 `FilledButton.icon`（minimumSize 高 52、文字 16 粗体）。
                         // material3 里 FilledButton 与 Button 是同一个组件，这里用 Button +
                         // 「图标 + 8dp 间距 + 文字」的行实现，视觉与 .icon 变体一致。
@@ -146,10 +175,18 @@ fun RecommendPage(app: AppState) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = 16.dp, top = 8.dp, end = 16.dp),
+                        .padding(
+                            start = kScreenHorizontalPadding,
+                            top = 8.dp,
+                            end = kScreenHorizontalPadding,
+                        ),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("选择", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = "选择",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Spacer(modifier = Modifier.weight(1f))
                     TextButton(
                         onClick = {
@@ -178,24 +215,42 @@ fun RecommendPage(app: AppState) {
                 HorizontalDivider(thickness = 1.dp)
             }
 
+            // 列表项各自带 16dp 左右内边距（Shizuku 的 addEdgeSpacing / app_list_item 都是这个规格），
+            // 所以 contentPadding 不再重复给左右边距。
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f),
+                    .weight(1f)
+                    .nestedScroll(behavior.nestedScrollConnection),
                 contentPadding = PaddingValues(
-                    start = 16.dp,
                     top = 8.dp,
-                    end = 16.dp,
                     bottom = if (selected.isEmpty()) 16.dp else 96.dp,
                 ),
             ) {
-                // 运动模式选择：随列表一起滚动（不固定）。
+                // 运动模式选择：随列表一起滚动（不固定），外层用 Shizuku 首页卡片包起来。
                 item(key = "mode-picker") {
-                    Box(modifier = Modifier.padding(bottom = 8.dp)) {
-                        ModePicker(
-                            bpm = library.targetBpm,
-                            onChanged = { v -> library.setTargetBpm(v) },
-                        )
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(
+                                start = kScreenHorizontalPadding,
+                                end = kScreenHorizontalPadding,
+                                bottom = 4.dp,
+                            ),
+                        shape = kCardCorner,
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 20.dp),
+                        ) {
+                            ModePicker(
+                                bpm = library.targetBpm,
+                                onChanged = { v -> library.setTargetBpm(v) },
+                            )
+                        }
                     }
                 }
 
@@ -230,48 +285,11 @@ fun RecommendPage(app: AppState) {
 }
 
 /**
- * 顶部工具栏（对应 Dart 推荐页的 `AppBar`：标题 + 使用说明 / 设置两个图标按钮）。
- *
- * 高度取 56dp 与 Flutter 的 AppBar 一致（material3 的 TopAppBar 是 64dp，且需要实验性注解）；
- * 图标按钮的 tooltip 在 Compose 侧没有稳定 API，这里只保留 contentDescription（无障碍文案一致）。
- */
-@Composable
-private fun RecommendTopBar(
-    onHelp: () -> Unit,
-    onSettings: () -> Unit,
-) {
-    Surface(color = MaterialTheme.colorScheme.surface) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp)
-                .padding(start = 16.dp, end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "运动模式与推荐",
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.titleLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            IconButton(onClick = onHelp) {
-                Icon(imageVector = Icons.Outlined.HelpOutline, contentDescription = "使用说明")
-            }
-            IconButton(onClick = onSettings) {
-                Icon(imageVector = Icons.Outlined.Settings, contentDescription = "设置")
-            }
-        }
-    }
-}
-
-/**
  * 一行推荐（对应 Dart `_RecTile`）。
  *
- * Dart 用 `ListTile(selected: ..., selectedTileColor: primary@15%, selectedColor: primary, dense: true)`；
- * Compose 侧由 material3 `ListItem` 承担（行内边距与 ListTile 一致）：
- * selectedTileColor → containerColor，selectedColor → headlineColor。
- * `dense` 在 ListItem 上没有对应参数，行高按 ListItem 默认值（略高于 Dart 的 dense）。
+ * 规格对齐 Shizuku 的 `app_list_item.xml`：行高 ≥64dp、左右 16dp 内边距、
+ * 左侧 48dp 圆角封面、封面与文字间距 24dp、标题 bodyLarge、副标题 bodyMedium/14sp。
+ * 选中底色 = `primary`@15%（等价 Dart `selectedTileColor`），标题同时转成 `primary`。
  */
 @Composable
 private fun RecTile(
@@ -287,17 +305,33 @@ private fun RecTile(
     // Compose 侧取 `gradeTempo(orig, target)`，深浅色由实际背景色判定（见 TempoGrade.kt）。
     val grade = gradeTempo(orig, targetBpm)
     val accent = MaterialTheme.colorScheme.primary
+    val subtitle = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp)
 
-    ListItem(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onToggle() },
-        headlineContent = {
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (selected) accent.copy(alpha = 0.15f) else Color.Transparent)
+            .clickable { onToggle() }
+            .defaultMinSize(minHeight = 64.dp)
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RecArtwork(path = s.artworkPath)
+        Spacer(modifier = Modifier.width(24.dp))
+        Column(modifier = Modifier.weight(1f)) {
             // Dart `MarqueeText(s.title)`：过长时横向滚动，放不下则省略。
-            MarqueeText(text = s.title)
-        },
-        supportingContent = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            MarqueeText(
+                text = s.title,
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    color = if (selected) accent else MaterialTheme.colorScheme.onSurface,
+                ),
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 // 分级箭头/符号（绿= · 绿/琥珀/红↑↓ · 红✕），颜色与 Web 图例一致。
                 Text(
                     text = grade.symbol,
@@ -306,36 +340,30 @@ private fun RecTile(
                     fontSize = 16.sp,
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    // BPM 走设置开关（对应 Dart `BpmDisplayController.format`：默认两位小数，关=整数）。
-                    Text(
-                        text = formatBpm(orig),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(" · ", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    // 带符号百分比（如 +3.4%），颜色与箭头一致；太窄时省略号截断。
-                    Text(
-                        text = if (orig != null) grade.pctLabel else "未知 BPM",
-                        modifier = Modifier.weight(1f, fill = false),
-                        color = grade.color,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+                // BPM 走设置开关（对应 Dart `BpmDisplayController.format`：默认两位小数，关=整数）。
+                Text(
+                    text = formatBpm(orig),
+                    style = subtitle,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = " · ",
+                    style = subtitle,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                // 带符号百分比（如 +3.4%），颜色与箭头一致；太窄时省略号截断。
+                Text(
+                    text = if (orig != null) grade.pctLabel else "未知 BPM",
+                    modifier = Modifier.weight(1f, fill = false),
+                    style = subtitle,
+                    color = grade.color,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
-        },
-        leadingContent = { RecArtwork(path = s.artworkPath) },
-        colors = ListItemDefaults.colors(
-            containerColor = if (selected) accent.copy(alpha = 0.15f) else Color.Transparent,
-            headlineColor = if (selected) accent else MaterialTheme.colorScheme.onSurface,
-            supportingColor = MaterialTheme.colorScheme.onSurfaceVariant,
-            leadingIconColor = if (selected) accent else MaterialTheme.colorScheme.onSurfaceVariant,
-        ),
-    )
+        }
+    }
 }
 
 /** 是否可用于变速：与原 BPM 的偏移 ≤12%（对应 Web TempoArrow 的可变速判定）。 */
@@ -375,7 +403,7 @@ private fun playSelected(app: AppState, selectedIds: List<String>) {
 }
 
 /**
- * 48×48 圆角封面缩略图；没有封面或解码失败时回退成灰色音符图标
+ * 48×48 圆角封面缩略图；没有封面或解码失败时回退成音符图标
  * （对应 Dart `Image.file(..., errorBuilder: (_, __, ___) => Icon(Icons.music_note, color: grey))`）。
  *
  * native_app 不使用图片加载库，这里在 IO 线程上按路径解码，结果按 path 记忆。
@@ -407,7 +435,7 @@ private fun RecArtwork(path: String?) {
     }
 }
 
-/** 封面缺省占位（48×48、居中、灰色音符）。 */
+/** 封面缺省占位（48×48、居中、主题副色音符）。 */
 @Composable
 private fun RecArtworkPlaceholder(shape: RoundedCornerShape) {
     Box(
@@ -419,7 +447,7 @@ private fun RecArtworkPlaceholder(shape: RoundedCornerShape) {
         Icon(
             imageVector = Icons.Filled.MusicNote,
             contentDescription = null,
-            tint = kArtworkGrey,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

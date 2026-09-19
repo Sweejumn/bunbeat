@@ -1,26 +1,25 @@
 package com.bunbeat.nativeapp.ui
 
-// 对应 Dart `ui/about_page.dart`（并参考 `ui/update_flow.dart` 的下载进度弹窗）。
+// 对应 Dart `ui/about_page.dart`（并参考 `ui/update_flow.dart` 的下载进度弹窗）；
+// 外观按 Shizuku（RikkaApps/Shizuku）的 Material 3 观感重做（卡片 + 圆形图标徽章）。
 //
-// - `AboutPage`        ← `AboutPage`（StatefulWidget）
-// - `AboutTopBar`      ← `Scaffold.appBar`（AppBar）
-// - `AboutCard`        ← 各 `Card` + `Padding(16)` + `Column` 的重复结构
-// - `openRepo`         ← `_AboutPageState._openRepo`
-// - `formatMb`         ← `update_flow.dart` 里的 `toStringAsFixed(1)` 兆字节文案
+// - `AboutPage`  ← `AboutPage`（StatefulWidget）
+// - `openRepo`   ← `_AboutPageState._openRepo`
+// - `formatMb`   ← `update_flow.dart` 里的 `toStringAsFixed(1)` 兆字节文案
+// - 各信息块     ← `HomeCard`（28dp 圆角 + `surfaceContainerHighest` + `CardIconBadge` 图标）
 //
 // Dart `_formatTime`（更新时间）没有搬：原生侧 `ReleaseInfo` 不带发布时间字段，
 // 因此「更新时间：…」这一行也没有输出（详见交付说明）。
+//
+// 文案一字未改；下载进度弹窗与「检查更新」的调用时机也保持原样，只调外观。
 
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -31,21 +30,18 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.SystemUpdateAlt
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.VolunteerActivism
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -59,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -76,9 +73,12 @@ import java.util.Locale
  *
  * [onBack] 返回设置页（对应 Dart 的 `Navigator.pop`）。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AboutPage(app: AppState, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
+    // 顶栏「滚动才升起」（对应 Shizuku 的 `app:liftOnScroll="true"`）。
+    val scrollBehavior = rememberBunbeatScrollBehavior()
 
     // 对应 Dart `_loadVersion()`：原生侧版本信息可以同步取到，但保留 Dart 的
     // 「先显示占位、取到再替换」行为。
@@ -123,15 +123,18 @@ fun AboutPage(app: AppState, onBack: () -> Unit) {
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        topBar = { AboutTopBar(title = "关于", onBack = onBack) },
+        topBar = {
+            BunbeatTopBar(title = "关于", onBack = onBack, scrollBehavior = scrollBehavior)
+        },
     ) { padding ->
-        // Dart 侧是 `ListView(padding: EdgeInsets.all(24))`。
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .nestedScroll(scrollBehavior.nestedScrollConnection)
                 .verticalScroll(rememberScrollState())
-                .padding(24.dp),
+                .padding(horizontal = kScreenHorizontalPadding)
+                .padding(top = 16.dp, bottom = 24.dp),
         ) {
             // 图标与名称（图标与桌面启动图标一致）
             Column(
@@ -180,8 +183,7 @@ fun AboutPage(app: AppState, onBack: () -> Unit) {
             Spacer(modifier = Modifier.height(24.dp))
 
             // 简介
-            AboutCard {
-                Text("简介", style = MaterialTheme.typography.titleSmall)
+            HomeCard(icon = Icons.Outlined.Info, title = "简介") {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     "Bunbeat 是一款跑步音乐播放器：选择本地文件夹直接读取音乐，自动识别 BPM，" +
@@ -190,11 +192,10 @@ fun AboutPage(app: AppState, onBack: () -> Unit) {
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
             // 最新版本公告
-            AboutCard {
-                Text("最新版本公告", style = MaterialTheme.typography.titleSmall)
+            HomeCard(icon = Icons.Filled.NewReleases, title = "最新版本公告") {
                 Spacer(modifier = Modifier.height(8.dp))
                 if (loading) {
                     Text(
@@ -235,11 +236,10 @@ fun AboutPage(app: AppState, onBack: () -> Unit) {
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
             // 致谢与开源
-            AboutCard {
-                Text("致谢与开源", style = MaterialTheme.typography.titleSmall)
+            HomeCard(icon = Icons.Outlined.VolunteerActivism, title = "致谢与开源") {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     "基于 Flutter 构建，播放与变速使用 just_audio / ExoPlayer，" +
@@ -247,46 +247,30 @@ fun AboutPage(app: AppState, onBack: () -> Unit) {
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
+            Spacer(modifier = Modifier.height(4.dp))
 
-            // 检查更新 / 查看源代码
-            Spacer(modifier = Modifier.height(16.dp))
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(4.dp),
-            ) {
-                ListItem(
-                    modifier = Modifier.clickable {
-                        // Dart `UpdateFlow.checkAndPrompt(context)`（manual = true）：
-                        // 有新版 → `pending` 置位，由 MainActivity 弹「发现新版本」；
-                        // 已最新/失败 → UpdateController 走 Snackbar。
-                        scope.launch { app.update.check(manual = true) }
-                    },
-                    headlineContent = { Text("检查更新") },
-                    // 检查失败时 `statusText` 为「检查更新失败」，直接替换副标题提示用户。
-                    supportingContent = {
-                        Text(app.update.statusText ?: "从 GitHub Releases 检查并安装新版本")
-                    },
-                    leadingContent = {
-                        Icon(Icons.Filled.SystemUpdateAlt, contentDescription = null)
-                    },
-                    trailingContent = {
-                        Icon(Icons.Filled.ChevronRight, contentDescription = null)
-                    },
-                )
-                HorizontalDivider(thickness = 1.dp)
-                ListItem(
-                    modifier = Modifier.clickable { openRepo(app) },
-                    headlineContent = { Text("查看 GitHub 源代码") },
-                    supportingContent = { Text("在浏览器中查看项目源码与更新记录") },
-                    leadingContent = {
-                        Icon(Icons.Filled.Code, contentDescription = null)
-                    },
-                    trailingContent = {
-                        Icon(Icons.Filled.ChevronRight, contentDescription = null)
-                    },
-                )
-            }
+            // 检查更新
+            HomeCard(
+                icon = Icons.Filled.SystemUpdateAlt,
+                title = "检查更新",
+                // 检查失败时 `statusText` 为「检查更新失败」，直接替换副标题提示用户。
+                summary = app.update.statusText ?: "从 GitHub Releases 检查并安装新版本",
+                onClick = {
+                    // Dart `UpdateFlow.checkAndPrompt(context)`（manual = true）：
+                    // 有新版 → `pending` 置位，由 MainActivity 弹「发现新版本」；
+                    // 已最新/失败 → UpdateController 走 Snackbar。
+                    scope.launch { app.update.check(manual = true) }
+                },
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // 查看源代码
+            HomeCard(
+                icon = Icons.Filled.Code,
+                title = "查看 GitHub 源代码",
+                summary = "在浏览器中查看项目源码与更新记录",
+                onClick = { openRepo(app) },
+            )
 
             Spacer(modifier = Modifier.height(24.dp))
             Text(
@@ -327,51 +311,6 @@ fun AboutPage(app: AppState, onBack: () -> Unit) {
             confirmButton = {
                 TextButton(onClick = { app.update.cancelDownload() }) { Text("取消") }
             },
-        )
-    }
-}
-
-/**
- * 顶栏（对应 Dart `AppBar(title: Text('关于'))`）。
- *
- * 手写而不用 material3 `TopAppBar`：Flutter 的 AppBar 高度是 56dp，
- * M3 TopAppBar 是 64dp；手写能严格对齐 Dart 的高度与左侧返回键位置。
- */
-@Composable
-private fun AboutTopBar(title: String, onBack: () -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.surface) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp)
-                .padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-            }
-            Text(title, style = MaterialTheme.typography.titleLarge)
-        }
-    }
-}
-
-/**
- * 统一的三段式卡片（对应 Dart `Card(child: Padding(EdgeInsets.all(16), child: Column(...)))`）。
- * Dart 的 Card 默认外边距是 4dp（四边），这里保持一致。
- */
-@Composable
-private fun AboutCard(content: @Composable ColumnScope.() -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(4.dp),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalAlignment = Alignment.Start,
-            content = content,
         )
     }
 }

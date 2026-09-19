@@ -11,6 +11,10 @@ package com.bunbeat.nativeapp.ui
 // 与 Dart 的一个结构性差异：Dart 的 `_ArchivedTile` 自己持有「弹面板 / 改 BPM」流程，
 // 原生侧把面板状态提到页面级（按 song id 记），这样后台分析更新 Song 实例时
 // 面板里显示的状态会跟着刷新，而不是停留在打开面板那一刻的旧快照。
+//
+// 视觉：对齐 Shizuku 风格的 Material 3 规范（PORT_CONTRACT 第 6 节）——
+// 顶栏用 `BunbeatTopBar` + 滚动才升起，列表行用 `BunbeatListRow`（≥64dp / 左右 16dp / …），
+// 颜色一律取 `MaterialTheme.colorScheme.*`，不写死色值。
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -21,6 +25,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,7 +38,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.DoubleArrow
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.HorizontalRule
@@ -42,17 +46,17 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -68,6 +72,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -81,6 +86,9 @@ import kotlin.math.roundToLong
 
 /** 未找到封面时占位图标的颜色（Dart `Colors.grey`）。 */
 private val kPlaceholderGrey = Color(0xFF9E9E9E)
+
+/** 底部操作面板的圆角：与 `kCardCorner`（28dp）同观感，只圆上面两个角。 */
+private val kSheetCorner = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
 
 /** 封面缩略图的目标像素边长：行高 48dp，中等密度屏幕约 144px。 */
 private const val kArtworkTargetPx = 144
@@ -109,38 +117,48 @@ fun ArchivePage(app: AppState, onBack: () -> Unit) {
     var actionsForId by remember { mutableStateOf<String?>(null) }
     var editingId by remember { mutableStateOf<String?>(null) }
 
+    // 顶栏「滚动才升起」的行为，接到下面的滚动容器上（对应 Shizuku 的 app:liftOnScroll="true"）。
+    val behavior = rememberBunbeatScrollBehavior()
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = { Text("归档") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回",
-                        )
-                    }
-                },
-            )
+            BunbeatTopBar(title = "归档", onBack = onBack, scrollBehavior = behavior)
         },
     ) { padding ->
         if (archived.isEmpty()) {
             // Dart: Center(child: Text('暂无归档歌曲\n在曲库长按歌曲 → 归档'))
-            // 两行文字整体居中，行内保持左对齐（不设 textAlign，与 Dart 的 Text 默认一致）。
+            // 两行文字整体居中（卡片居中），卡片内文字保持左对齐（不设 textAlign，与 Dart 的 Text 默认一致）。
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding),
+                    .padding(padding)
+                    .padding(horizontal = kScreenHorizontalPadding),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("暂无归档歌曲\n在曲库长按歌曲 → 归档")
+                Card(
+                    shape = kCardCorner,
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                ) {
+                    Text(
+                        text = "暂无归档歌曲\n在曲库长按歌曲 → 归档",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp),
+                    )
+                }
             }
         } else {
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding),
+                    .padding(padding)
+                    // 行内已经自带左右 16dp，这里只补上下留白（卡片/行之间 4dp 的观感）。
+                    .nestedScroll(behavior.nestedScrollConnection),
+                contentPadding = PaddingValues(vertical = 4.dp),
             ) {
                 items(items = archived, key = { it.id }) { song ->
                     ArchivedTile(
@@ -190,37 +208,33 @@ fun ArchivePage(app: AppState, onBack: () -> Unit) {
  * 归档列表的一行。对应 Dart `_ArchivedTile`。
  *
  * 点击与长按都打开操作面板；右侧「放回」按钮直接放回曲库（等价 Dart 的 trailing TextButton）。
+ *
+ * 行本身用 `BunbeatListRow`（Shizuku `app_list_item.xml` 规格：≥64dp、左右 16dp、
+ * 图标与文字 24dp、标题 bodyLarge、副标题 bodyMedium/14sp + onSurfaceVariant）。
+ * 因为 `BunbeatListRow` 只接 `onClick`，而这里长按也要开面板，所以把长按识别器包在行外层：
+ * 传进去的 modifier 施加在行内边距之前，点击区域仍然覆盖整行；此时不再传 `onClick`，
+ * 避免内层的 `clickable` 和外层的 `combinedClickable` 两个识别器打架。
  */
 @Composable
 private fun ArchivedTile(app: AppState, song: Song, onOpenActions: () -> Unit) {
     // 归档行淡显，示意已隐藏（Dart: surfaceContainerHighest.withValues(alpha: 0.3)）。
     val tileColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.3f)
 
-    Row(
+    BunbeatListRow(
+        // Dart 用的是 song.title（不是 displayTitle）。
+        title = song.title,
         modifier = Modifier
-            .fillMaxWidth()
             .background(tileColor)
             .combinedClickable(
                 onClick = onOpenActions,
                 onLongClick = onOpenActions,
-            )
-            // 上下各 12dp + 48dp 封面 = 72dp，对齐 Dart 两行 ListTile 的行高。
-            .padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        ArtworkThumb(path = song.artworkPath)
-        Spacer(modifier = Modifier.width(16.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            // Dart 用的是 song.title（不是 displayTitle）。
-            MarqueeText(text = song.title, style = MaterialTheme.typography.bodyLarge)
-            Text(
-                text = statusText(app, song),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        TextButton(onClick = { app.library.unarchive(song.id) }) { Text("放回") }
-    }
+            ),
+        summary = statusText(app, song),
+        leading = { ArtworkThumb(path = song.artworkPath) },
+        trailing = {
+            TextButton(onClick = { app.library.unarchive(song.id) }) { Text("放回") }
+        },
+    )
 }
 
 /** 操作面板。对应 Dart `_ArchivedTile._showActions` 里的 showModalBottomSheet。 */
@@ -247,6 +261,9 @@ private fun ArchivedActionsSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
+        // 与卡片同一套观感：surfaceContainerLow 底 + 28dp 顶部圆角（内容色由 M3 按底色推导）。
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = kSheetCorner,
         // Flutter 的 showModalBottomSheet 默认不显示拖拽把手，这里去掉以保持一致。
         dragHandle = null,
     ) {
@@ -254,7 +271,12 @@ private fun ArchivedActionsSheet(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
+                .padding(
+                    start = kScreenHorizontalPadding,
+                    end = kScreenHorizontalPadding,
+                    top = 12.dp,
+                    bottom = 12.dp,
+                ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
@@ -295,7 +317,12 @@ private fun SheetAction(icon: ImageVector, label: String, onClick: () -> Unit) {
             .fillMaxWidth()
             .clickable(onClick = onClick)
             // 上下各 16dp + 24dp 图标 = 56dp，对齐 Dart ListTile 的单行高度。
-            .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 16.dp),
+            .padding(
+                start = kScreenHorizontalPadding,
+                end = kScreenHorizontalPadding,
+                top = 16.dp,
+                bottom = 16.dp,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
@@ -304,7 +331,11 @@ private fun SheetAction(icon: ImageVector, label: String, onClick: () -> Unit) {
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(modifier = Modifier.width(16.dp))
-        Text(text = label, style = MaterialTheme.typography.bodyLarge)
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
     }
 }
 

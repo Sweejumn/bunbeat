@@ -2,16 +2,16 @@ package com.bunbeat.nativeapp.ui
 
 // 对应 Dart `ui/library_page.dart`。
 //
-// 曲库页结构（自下而上与 Dart 一一对应）：
-//   顶部工具栏（Bunbeat · 曲库 + 归档 / 使用说明 / 设置）
+// 曲库页结构（自上而下与 Dart 一一对应）：
+//   顶栏（BunbeatTopBar：返回 + 「曲库」+ 归档 / 使用说明 / 设置，滚动才升起）
 //   → 操作条（添加音乐 / 音源 + 排序 + 搜索）
 //   → 搜索框（可折叠）
 //   → 扫描 / 分析进度条
 //   → 列表（点击选中、长按呼出操作菜单）或空状态
 //
 // 与 Dart 的承载方式差异只有两处：
-//   1. Dart 的页面自带 `Scaffold + AppBar`；原生侧曲库是 HomePage 底部 Tab 的一页
-//      （外层已经有 Scaffold 与 Snackbar），所以这里只画一条与 AppBar 同高同色的工具栏行。
+//   1. Dart 的曲库是底部 Tab 的一页；原生侧改成从首页卡片进入的**子页**，所以多了 onBack 参数，
+//      顶栏换成公共组件 BunbeatTopBar + pinnedScrollBehavior（对应 Shizuku 的 liftOnScroll）。
 //   2. Dart 的底部面板（showModalBottomSheet）在原生侧用 material3 的 `ModalBottomSheet`，
 //      行为一致（可下拉关闭、背景可点关闭）。
 
@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -71,7 +72,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -93,6 +93,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
@@ -107,7 +108,6 @@ import com.bunbeat.nativeapp.audio.AudioReader
 import com.bunbeat.nativeapp.model.BpmStatus
 import com.bunbeat.nativeapp.model.Song
 import com.bunbeat.nativeapp.store.LibraryStore
-import com.bunbeat.nativeapp.ui.theme.isDarkTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
@@ -165,23 +165,25 @@ private const val kLastFolderPrefKey = "last_folder"
 /** 封面缩略图的目标边长（像素）：48dp 在 3x 屏上是 144px，避免整张大图进内存。 */
 private const val kArtworkThumbPx = 144
 
-/** 与 Dart `Colors.grey` / `Colors.green.shade700` 等一一对应的 Material 2 调色板原值。 */
+/**
+ * 封面缺省占位用的中性灰（对应 Dart 的 `Colors.grey`）。
+ *
+ * 这是本文件（也是整个页面层）唯一保留的写死颜色：封面占位不参与动态取色，
+ * 灰色在任何壁纸取色出来的色板上都不会喧宾夺主。其余语义色一律走 `MaterialTheme.colorScheme.*`。
+ */
 private val kGrey = Color(0xFF9E9E9E)
-private val kGreenAccent = Color(0xFF69F0AE)
-private val kGreen700 = Color(0xFF388E3C)
-private val kRedAccent = Color(0xFFFF5252)
-private val kRed700 = Color(0xFFD32F2F)
-private val kOrangeAccent = Color(0xFFFFAB40)
-private val kOrange800 = Color(0xFFEF6C00)
 
 /**
  * 曲库页（对应 Dart `LibraryPage` + `_LibraryPageState`）。
  *
  * 页内状态与 Dart 的 StatefulWidget 状态一一对应：排序方式、搜索关键字与开关、
  * 点击选中的歌曲 id 集合、以及三个弹窗（音源面板 / 长按菜单 / 手动改 BPM）。
+ *
+ * [onBack] 由外层（MainActivity）注入：曲库是从首页卡片进入的子页，顶栏左侧显示返回箭头。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LibraryPage(app: AppState) {
+fun LibraryPage(app: AppState, onBack: () -> Unit) {
     val library = app.library
 
     // 排序方式：Dart 用 enum，这里存序号以便 rememberSaveable 跨配置变更保留。
@@ -312,18 +314,38 @@ fun LibraryPage(app: AppState) {
         }
     }
 
+    // 顶栏的「滚动才升起」行为（对应 Shizuku 的 app:liftOnScroll）：接给下面的 LazyColumn。
+    val behavior = rememberBunbeatScrollBehavior()
+
     Column(modifier = Modifier.fillMaxSize()) {
-        LibraryTopBar(
-            onArchive = { app.nav.openArchive() },
-            onHelp = { showHelp = true },
-            onSettings = { app.nav.openSettings() },
+        BunbeatTopBar(
+            title = "曲库",
+            onBack = onBack,
+            scrollBehavior = behavior,
+            actions = {
+                // 原来手写顶栏里的三个图标按钮原样搬过来：图标、顺序、无障碍文案都不变。
+                IconButton(onClick = { app.nav.openArchive() }) {
+                    Icon(imageVector = Icons.Outlined.Inventory2, contentDescription = "归档")
+                }
+                IconButton(onClick = { showHelp = true }) {
+                    Icon(imageVector = Icons.Outlined.HelpOutline, contentDescription = "使用说明")
+                }
+                IconButton(onClick = { app.nav.openSettings() }) {
+                    Icon(imageVector = Icons.Outlined.Settings, contentDescription = "设置")
+                }
+            },
         )
 
         // 顶部操作条：音源按钮（首次进入是「添加音乐」，选过文件夹后显示「音源」）+ 排序 + 搜索。
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 4.dp),
+                .padding(
+                    start = kScreenHorizontalPadding,
+                    top = 8.dp,
+                    end = kScreenHorizontalPadding,
+                    bottom = 4.dp,
+                ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // material3 没有 FilledButton（那是 Flutter 的组件名），带图标的实心按钮就用 Button。
@@ -369,7 +391,11 @@ fun LibraryPage(app: AppState) {
                 onValueChange = { query = it },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 12.dp, end = 12.dp, bottom = 4.dp)
+                    .padding(
+                        start = kScreenHorizontalPadding,
+                        end = kScreenHorizontalPadding,
+                        bottom = 4.dp,
+                    )
                     .focusRequester(focusRequester),
                 placeholder = { Text("搜索歌名 / 歌手") },
                 leadingIcon = {
@@ -385,7 +411,7 @@ fun LibraryPage(app: AppState) {
             LinearProgressIndicator(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp),
+                    .padding(horizontal = kScreenHorizontalPadding, vertical = 8.dp),
             )
         }
 
@@ -398,6 +424,7 @@ fun LibraryPage(app: AppState) {
             selected = selected,
             onToggle = { toggleSong(it) },
             onLongPress = { requestActions(it) },
+            scrollBehavior = behavior,
             modifier = Modifier.weight(1f),
         )
     }
@@ -443,46 +470,6 @@ fun LibraryPage(app: AppState) {
     }
 }
 
-/**
- * 顶部工具栏（对应 Dart 曲库页的 `AppBar`：标题 + 归档 / 使用说明 / 设置三个图标按钮）。
- *
- * 高度取 56dp 与 Flutter 的 AppBar 一致（material3 的 TopAppBar 是 64dp）；
- * 图标按钮的 tooltip 在 Compose 侧没有稳定 API，这里只保留 contentDescription（无障碍文案一致）。
- */
-@Composable
-private fun LibraryTopBar(
-    onArchive: () -> Unit,
-    onHelp: () -> Unit,
-    onSettings: () -> Unit,
-) {
-    Surface(color = MaterialTheme.colorScheme.surface) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp)
-                .padding(start = 16.dp, end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "Bunbeat · 曲库",
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.titleLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            IconButton(onClick = onArchive) {
-                Icon(imageVector = Icons.Outlined.Inventory2, contentDescription = "归档")
-            }
-            IconButton(onClick = onHelp) {
-                Icon(imageVector = Icons.Outlined.HelpOutline, contentDescription = "使用说明")
-            }
-            IconButton(onClick = onSettings) {
-                Icon(imageVector = Icons.Outlined.Settings, contentDescription = "设置")
-            }
-        }
-    }
-}
-
 /** 排序菜单（对应 Dart 的 `PopupMenuButton<_SortMode>`：图标 + 六个选项，当前项带勾）。 */
 @Composable
 private fun SortMenuButton(
@@ -523,10 +510,11 @@ private fun SortMenuButton(
 private fun LibraryStatusStrip(library: LibraryStore) {
     val status = library.statusText
     if (status == null && library.errors.isEmpty()) return
+    // 颜色本来就是语义角色：进行中/完成状态走 onSurfaceVariant，错误走 error（动态取色下自动协调）。
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 12.dp, end = 12.dp, bottom = 4.dp),
+            .padding(start = kScreenHorizontalPadding, end = kScreenHorizontalPadding, bottom = 4.dp),
     ) {
         if (status != null) {
             Text(
@@ -558,6 +546,9 @@ private fun MusicSourceSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetGesturesEnabled = true,
+        // 外观对齐 Shizuku 的面板：28dp 顶部圆角 + surfaceContainerLow 容器色（动态取色）。
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         SheetTile(
             leading = Icons.Filled.Add,
@@ -609,6 +600,9 @@ private fun SongActionsSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetGesturesEnabled = true,
+        // 外观对齐 Shizuku 的面板：28dp 顶部圆角 + surfaceContainerLow 容器色（动态取色）。
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         // 面板高度不足时内容可滚动，避免底部选项（如「手动修改」）被遮挡（与 Dart 的
         // SingleChildScrollView 一致）。
@@ -628,7 +622,7 @@ private fun SongActionsSheet(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                        .padding(horizontal = kScreenHorizontalPadding, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(
@@ -636,7 +630,7 @@ private fun SongActionsSheet(
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Spacer(modifier = Modifier.width(16.dp))
+                    Spacer(modifier = Modifier.width(24.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         MarqueeText(
                             text = request.song.title,
@@ -645,7 +639,8 @@ private fun SongActionsSheet(
                         Text(
                             text = libraryStatusText(app, request.song),
                             style = MaterialTheme.typography.bodyMedium.copy(
-                                color = libraryStatusColor(request.song, isDarkTheme()),
+                                fontSize = 14.sp,
+                                color = libraryStatusColor(request.song),
                             ),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -719,7 +714,9 @@ private fun SheetTile(
         Modifier.fillMaxWidth()
     }
     Row(
-        modifier = rowModifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        modifier = rowModifier
+            .defaultMinSize(minHeight = 56.dp)
+            .padding(horizontal = kScreenHorizontalPadding, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
@@ -727,7 +724,7 @@ private fun SheetTile(
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(modifier = Modifier.width(16.dp))
+        Spacer(modifier = Modifier.width(24.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
@@ -739,6 +736,7 @@ private fun SheetTile(
                 Text(
                     text = subtitle,
                     style = subtitleStyle ?: MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     ),
                     maxLines = 1,
@@ -791,6 +789,7 @@ private fun ManualBpmDialog(
  * 列表主体（对应 Dart `_buildBody` / `_SongList`）：
  * 没选过文件夹 → 空状态引导；选了但过滤后为空 → 「没有匹配的音乐」；否则是歌曲列表。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LibraryBody(
     app: AppState,
@@ -799,6 +798,7 @@ private fun LibraryBody(
     selected: List<String>,
     onToggle: (String) -> Unit,
     onLongPress: (Song) -> Unit,
+    scrollBehavior: BunbeatScrollBehavior,
     modifier: Modifier = Modifier,
 ) {
     val library = app.library
@@ -820,7 +820,13 @@ private fun LibraryBody(
         return
     }
 
-    LazyColumn(modifier = modifier.fillMaxSize()) {
+    // 顶栏「滚动才升起」：只有真正会滚的这个 LazyColumn 需要挂 nestedScroll 连接，
+    // 空状态（Box）不滚，自然也不会把顶栏升起来。
+    LazyColumn(
+        modifier = modifier
+            .fillMaxSize()
+            .nestedScroll(scrollBehavior.nestedScrollConnection),
+    ) {
         items(items = songs, key = { it.id }) { song ->
             SongTile(
                 app = app,
@@ -842,15 +848,20 @@ private fun EmptyLibraryState(modifier: Modifier = Modifier) {
                 imageVector = Icons.Filled.MusicNote,
                 contentDescription = null,
                 modifier = Modifier.size(80.dp),
-                tint = kGrey,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
                 text = "还没有音乐\n点上方「添加音乐」选择一个文件夹导入",
                 style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(modifier = Modifier.height(16.dp))
-            Text(text = "无需上传，全程离线", fontSize = 12.sp)
+            Text(
+                text = "无需上传，全程离线",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -858,6 +869,9 @@ private fun EmptyLibraryState(modifier: Modifier = Modifier) {
 /**
  * 单首歌曲行（对应 Dart `_SongTile`）：
  * 封面缩略图 + 标题（跑马灯）+ 状态文案（颜色随分析状态变化），点击选中、长按呼出菜单。
+ *
+ * 尺寸对齐 Shizuku 的 `app_list_item.xml`：行高 ≥64dp（48dp 封面 + 上下 8dp）、
+ * 左右 16dp、图标与文字间距 24dp、标题 bodyLarge、副标题 bodyMedium / 14sp。
  */
 @Composable
 private fun SongTile(
@@ -868,12 +882,11 @@ private fun SongTile(
     onLongPress: () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    val tint = if (selected) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-    } else {
-        Color.Transparent
-    }
+    // 选中态用 M3 的「选中」语义色 secondaryContainer；未选中时保持全透明（不画卡片底）。
+    val tint = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
     Row(
+        // 手势相关的三个 Modifier（background / indication / pointerInput）顺序与改前完全一致，
+        // pointerInput 的 key 仍然是 song.id：长按 250ms 与点击选中的判定逻辑一个字都没动。
         modifier = Modifier
             .fillMaxWidth()
             .background(tint)
@@ -886,11 +899,12 @@ private fun SongTile(
                     onLongPress = onLongPress,
                 )
             }
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .defaultMinSize(minHeight = 64.dp)
+            .padding(horizontal = kScreenHorizontalPadding, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         ArtworkThumb(path = song.artworkPath)
-        Spacer(modifier = Modifier.width(16.dp))
+        Spacer(modifier = Modifier.width(24.dp))
         Column(modifier = Modifier.weight(1f)) {
             MarqueeText(
                 text = song.title,
@@ -899,7 +913,8 @@ private fun SongTile(
             Text(
                 text = libraryStatusText(app, song),
                 style = MaterialTheme.typography.bodyMedium.copy(
-                    color = libraryStatusColor(song, isDarkTheme()),
+                    fontSize = 14.sp,
+                    color = libraryStatusColor(song),
                 ),
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
@@ -968,11 +983,18 @@ private fun libraryStatusText(app: AppState, song: Song): String = when (song.bp
     }
 }
 
-/** 状态颜色（对应 Dart `_SongTile.build` 里的 switch，浅色用深色、深色用高亮色）。 */
-private fun libraryStatusColor(song: Song, dark: Boolean): Color = when (song.bpmStatus) {
-    BpmStatus.DONE -> if (dark) kGreenAccent else kGreen700
-    BpmStatus.FAILED -> if (dark) kRedAccent else kRed700
-    BpmStatus.PENDING, BpmStatus.ANALYZING -> if (dark) kOrangeAccent else kOrange800
+/**
+ * 状态颜色（对应 Dart `_SongTile.build` 里的 switch）。
+ *
+ * Dart 写的是 Material 2 的三组固定色（完成=绿、失败=红、进行中=橙，浅色用深色档、深色用高亮档）；
+ * 原生侧跟随壁纸动态取色，写死颜色会和取出来的色板打架，所以按语义换成 colorScheme 的角色：
+ * 完成 = 普通副标题色（onSurfaceVariant）、失败 = error、进行中 = tertiary。
+ */
+@Composable
+private fun libraryStatusColor(song: Song): Color = when (song.bpmStatus) {
+    BpmStatus.DONE -> MaterialTheme.colorScheme.onSurfaceVariant
+    BpmStatus.FAILED -> MaterialTheme.colorScheme.error
+    BpmStatus.PENDING, BpmStatus.ANALYZING -> MaterialTheme.colorScheme.tertiary
 }
 
 /** 排序（对应 Dart `_visibleSongs` 里的 switch；SCAN 即扫描顺序，不做处理）。 */

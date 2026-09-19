@@ -29,6 +29,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -174,6 +175,17 @@ fun ModePicker(
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.End,
+                    color = MaterialTheme.colorScheme.onSurface,
+                ),
+                // 颜色一律走主题（动态取色下不能写死）：文字 onSurface、光标/聚焦边框 primary。
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    cursorColor = MaterialTheme.colorScheme.primary,
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
                 ),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 keyboardActions = KeyboardActions(onDone = { commitDraft() }),
@@ -184,11 +196,12 @@ fun ModePicker(
         Spacer(modifier = Modifier.height(10.dp))
 
         // 当前模式横幅（放在四个快捷芯片上方）。
+        // 底色取 surfaceContainer：外层卡片已经是 surfaceContainerHighest，同档会看不出边界。
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                .background(MaterialTheme.colorScheme.surfaceContainer)
                 .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
             Text(
@@ -198,6 +211,7 @@ fun ModePicker(
                     "${activeDef.icon} ${activeDef.label} · ${activeDef.rangeLow}–${activeDef.rangeHigh} BPM"
                 },
                 fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurface,
             )
         }
         Spacer(modifier = Modifier.height(10.dp))
@@ -208,6 +222,12 @@ fun ModePicker(
             kModes.filter { it.id != ModeId.CUSTOM }.forEach { m ->
                 val selected = mode == m.id
                 val accent = MaterialTheme.colorScheme.primary
+                // 选中芯片是 primaryContainer 实底，文字得用 onPrimaryContainer 才够对比。
+                val chipContent = if (selected) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                }
                 Box(
                     // Dart 用 `Expanded(child: Padding(horizontal: 3, child: InkWell(...)))`：
                     // 四张卡等分宽度、各自左右留 3dp。
@@ -216,8 +236,10 @@ fun ModePicker(
                         .padding(horizontal = 3.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(
-                            if (selected) accent.copy(alpha = 0.18f)
-                            else MaterialTheme.colorScheme.surfaceContainerHighest,
+                            // 选中 = primaryContainer 实底；未选中 = surfaceContainer
+                            // （外层卡片是 surfaceContainerHighest，同一档会看不出芯片边界）。
+                            if (selected) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surfaceContainer,
                         )
                         .border(
                             width = 1.dp,
@@ -231,9 +253,18 @@ fun ModePicker(
                     contentAlignment = Alignment.Center,
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(m.icon, fontSize = 16.sp)
+                        Text(
+                            text = m.icon,
+                            fontSize = 16.sp,
+                            color = chipContent,
+                        )
                         Spacer(modifier = Modifier.height(2.dp))
-                        Text(m.label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = m.label,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = chipContent,
+                        )
                     }
                 }
             }

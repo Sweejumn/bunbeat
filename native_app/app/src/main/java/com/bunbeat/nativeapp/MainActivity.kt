@@ -18,6 +18,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -34,6 +35,9 @@ import com.bunbeat.nativeapp.update.UpdateController
 import com.bunbeat.nativeapp.ui.AboutPage
 import com.bunbeat.nativeapp.ui.ArchivePage
 import com.bunbeat.nativeapp.ui.HomePage
+import com.bunbeat.nativeapp.ui.LibraryPage
+import com.bunbeat.nativeapp.ui.PlayerPage
+import com.bunbeat.nativeapp.ui.RecommendPage
 import com.bunbeat.nativeapp.ui.SettingsPage
 import com.bunbeat.nativeapp.ui.theme.BunbeatTheme
 import kotlinx.coroutines.CoroutineScope
@@ -43,14 +47,36 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/** 顶层页面（对应 Dart 里 Navigator 推入的几个整页）。 */
-private enum class Screen { HOME, ARCHIVE, SETTINGS, ABOUT }
+/**
+ * 顶层页面。
+ *
+ * v0.3 起导航结构对齐 Shizuku：**没有底部 Tab**，首页是一屏卡片流，
+ * 其余页面都是从首页「推入」的子页（各自带返回箭头的 M3 顶栏）。
+ */
+private enum class Screen { HOME, LIBRARY, RECOMMEND, PLAYER, ARCHIVE, SETTINGS, ABOUT }
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var app: AppState
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var screen by mutableStateOf(Screen.HOME)
+
+    /**
+     * 页面历史（就是 Shizuku 那种「子页返回上一层」的简单栈）。
+     * 必须用栈而不是只记一层：首页 → 曲库 → 设置 → 关于 之后要能一层层退回去。
+     */
+    private val backStack = mutableStateListOf<Screen>()
+
+    private fun go(target: Screen) {
+        if (screen == target) return
+        backStack.add(screen)
+        screen = target
+    }
+
+    private fun back() {
+        val prev = backStack.removeLastOrNull() ?: Screen.HOME
+        screen = prev
+    }
 
     /** SAF 目录选择器：`ACTION_OPEN_DOCUMENT_TREE` 对应 Dart 侧 file_picker 的目录选择。 */
     private val folderLauncher =
@@ -122,10 +148,13 @@ class MainActivity : ComponentActivity() {
         // 更新流程的提示统一走底部 Snackbar（与页面提示同一个通道）。
         app.update.onMessage = { app.snackbar(it) }
         app.nav = NavActions(
-            openArchive = { screen = Screen.ARCHIVE },
-            openSettings = { screen = Screen.SETTINGS },
-            openAbout = { screen = Screen.ABOUT },
-            back = { screen = Screen.HOME },
+            openLibrary = { go(Screen.LIBRARY) },
+            openRecommend = { go(Screen.RECOMMEND) },
+            openPlayer = { go(Screen.PLAYER) },
+            openArchive = { go(Screen.ARCHIVE) },
+            openSettings = { go(Screen.SETTINGS) },
+            openAbout = { go(Screen.ABOUT) },
+            back = { back() },
         )
 
         // 播完后的行为完全交给 QueueStore.onEnded()：
@@ -138,7 +167,12 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            BunbeatTheme(seed = app.settings.seed, darkMode = settings.darkModeOverride()) {
+            BunbeatTheme(
+                seed = app.settings.seed,
+                darkMode = settings.darkModeOverride(),
+                // Android 12+ 默认跟随壁纸取色（Material You），可在设置里关掉。
+                useSystemColor = app.settings.useSystemColor,
+            ) {
                 CompositionLocalProvider(LocalApp provides app) {
                     AppRoot(app)
                 }
@@ -183,7 +217,7 @@ class MainActivity : ComponentActivity() {
             app.metronome.updateBpm(song.originalBpm ?: app.library.targetBpm, song.beatTimes)
         }
 
-        BackHandler(enabled = screen != Screen.HOME) { screen = Screen.HOME }
+        BackHandler(enabled = screen != Screen.HOME) { back() }
 
         Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
@@ -193,11 +227,15 @@ class MainActivity : ComponentActivity() {
                 modifier = Modifier.fillMaxSize(),
                 color = MaterialTheme.colorScheme.background,
             ) {
+                val back = { back() }
                 when (screen) {
                     Screen.HOME -> HomePage(app)
-                    Screen.ARCHIVE -> ArchivePage(app) { screen = Screen.HOME }
-                    Screen.SETTINGS -> SettingsPage(app) { screen = Screen.HOME }
-                    Screen.ABOUT -> AboutPage(app) { screen = Screen.SETTINGS }
+                    Screen.LIBRARY -> LibraryPage(app, onBack = back)
+                    Screen.RECOMMEND -> RecommendPage(app, onBack = back)
+                    Screen.PLAYER -> PlayerPage(app, onBack = back)
+                    Screen.ARCHIVE -> ArchivePage(app, onBack = back)
+                    Screen.SETTINGS -> SettingsPage(app, onBack = back)
+                    Screen.ABOUT -> AboutPage(app, onBack = back)
                 }
             }
         }

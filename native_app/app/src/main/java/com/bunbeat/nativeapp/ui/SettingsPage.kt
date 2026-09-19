@@ -1,13 +1,16 @@
 package com.bunbeat.nativeapp.ui
 
-// 对应 Dart `ui/settings_page.dart`。
+// 对应 Dart `ui/settings_page.dart`；外观按 Shizuku（RikkaApps/Shizuku）的 Material 3 观感重做。
 //
-// - `SettingsPage`        ← `SettingsPage`（StatelessWidget）
-// - `SectionHeader`       ← `SettingsPage._sectionHeader`
-// - `ThemeModeSelector`   ← `_ThemeModeSelector`
-// - `ColorSwatch`         ← `_ColorSwatch`
-// - `SettingsTopBar`      ← `Scaffold.appBar`（AppBar）
-// - `ThemeModeEntry`      ← `_ThemeModeSelector.entries` 里的三元组
+// - `SettingsPage`      ← `SettingsPage`（StatelessWidget）
+// - `ThemeModeSelector` ← `_ThemeModeSelector`
+// - `ColorSwatch`       ← `_ColorSwatch`
+// - `ThemeModeEntry`    ← `_ThemeModeSelector.entries` 里的三元组
+// - 顶栏 / 分组标题 / 列表行 ← `BunbeatTopBar` / `SectionLabel` / `BunbeatListRow`（同在 ui 包）
+//
+// 本次新增「跟随壁纸」开关（对应 Shizuku 设置页的「使用系统颜色」）：只在 Android 12+
+// 显示，与下面的预设主题色互斥 —— 选预设色会经 `SettingsStore.setSeed` 自动把它关掉，
+// 所以色块的选中态只在它关闭时才画。
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -15,6 +18,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -30,20 +34,19 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Numbers
+import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -55,6 +58,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -63,119 +67,132 @@ import androidx.compose.ui.unit.sp
 import com.bunbeat.nativeapp.AppState
 import com.bunbeat.nativeapp.store.ThemeModeSetting
 import com.bunbeat.nativeapp.ui.theme.kThemeColors
+import com.bunbeat.nativeapp.ui.theme.supportsDynamicColor
 
 /**
- * 设置页：外观（主题模式 + 主题色）+ BPM 显示格式 + 使用说明/关于入口。
+ * 设置页：外观（主题模式 + 跟随壁纸 + 主题色）+ BPM 显示格式 + 使用说明/关于入口。
  *
  * [onBack] 返回首页（对应 Dart 的 `Navigator.pop`）；「关于应用」通过
  * [AppState.nav]`.openAbout()` 跳转（对应 Dart `Navigator.push(AboutPage)`）。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsPage(app: AppState, onBack: () -> Unit) {
     // 「使用说明」弹窗开关（对应 Dart `HelpDialog.showAll` 的即时弹窗）。
     var showAllHelp by remember { mutableStateOf(false) }
+    // 顶栏「滚动才升起」（对应 Shizuku 的 `app:liftOnScroll="true"`）。
+    val scrollBehavior = rememberBunbeatScrollBehavior()
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        topBar = { SettingsTopBar(title = "设置", onBack = onBack) },
+        topBar = {
+            BunbeatTopBar(title = "设置", onBack = onBack, scrollBehavior = scrollBehavior)
+        },
     ) { padding ->
         // Dart 侧是 ListView；这里条目固定且很少，用可滚动的 Column 等价实现。
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .verticalScroll(rememberScrollState()),
+                .nestedScroll(scrollBehavior.nestedScrollConnection)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = kScreenHorizontalPadding)
+                .padding(bottom = 24.dp),
         ) {
             // 外观
-            SectionHeader("外观")
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    // Dart `Card(margin: EdgeInsets.symmetric(horizontal: 12))`：
-                    // 显式 margin 会覆盖 Card 默认的 4dp 四边距，故这里只有水平 12dp。
-                    .padding(horizontal = 12.dp),
-            ) {
+            SectionLabel("外观")
+            SettingsCard {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalAlignment = Alignment.Start,
+                        .padding(start = 16.dp, top = 16.dp, end = 16.dp),
                 ) {
                     Text("主题", style = MaterialTheme.typography.titleSmall)
                     Spacer(modifier = Modifier.height(12.dp))
                     // 「跟随系统」选项特意更宽（flex 2），其余两个等宽（flex 1），
                     // 让默认推荐项更醒目。
                     ThemeModeSelector(app)
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("主题色", style = MaterialTheme.typography.titleSmall)
+                }
+
+                // 跟随壁纸（Material You 动态取色）：Android 12 以下没有这套 API，直接不显示。
+                if (supportsDynamicColor()) {
                     Spacer(modifier = Modifier.height(8.dp))
+                    SettingsDivider()
+                    BunbeatListRow(
+                        title = "跟随壁纸",
+                        summary = "使用系统壁纸的配色（Android 12+）；关闭后使用下面的预设主题色",
+                        leading = { CardIconBadge(icon = Icons.Filled.Wallpaper) },
+                        trailing = {
+                            Switch(
+                                checked = app.settings.useSystemColor,
+                                onCheckedChange = { app.settings.setUseSystemColor(it) },
+                            )
+                        },
+                        // 整行可点（与 BPM 那一行一致）；Switch 自己会消费点击，不会触发两次。
+                        onClick = {
+                            app.settings.setUseSystemColor(!app.settings.useSystemColor)
+                        },
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                SettingsDivider()
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 16.dp),
+                ) {
+                    Text("主题色", style = MaterialTheme.typography.titleSmall)
+                    Spacer(modifier = Modifier.height(12.dp))
                     // 主题色选择：一行行排列的色块，选中的带对勾。
                     // Dart `Wrap(spacing: 12, runSpacing: 12)` ↔ `FlowRow`。
-                    ColorSwatchWrap(app)
+                    // 跟随壁纸时配色由系统决定，色块全部不画选中态（选中态体现在上面那行开关）。
+                    ColorSwatchWrap(app, showSelection = !app.settings.useSystemColor)
                 }
             }
 
             // BPM 显示格式
-            SectionHeader("BPM 显示")
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp),
-            ) {
+            SectionLabel("BPM 显示")
+            SettingsCard {
                 // Dart `SwitchListTile`：整行可点 + 右侧开关。
-                // material3 没有 SwitchListTile，用 ListItem + Switch 手工拼。
-                ListItem(
-                    modifier = Modifier.clickable {
-                        app.settings.setTwoDecimals(!app.settings.bpmTwoDecimals)
-                    },
-                    headlineContent = { Text("BPM 保留两位小数") },
-                    supportingContent = { Text("曲库/推荐/播放页的 BPM 显示两位小数；关闭则按整数显示。") },
-                    leadingContent = {
-                        Icon(Icons.Filled.Numbers, contentDescription = null)
-                    },
-                    trailingContent = {
+                // material3 没有 SwitchListTile，用 BunbeatListRow + Switch 拼。
+                BunbeatListRow(
+                    title = "BPM 保留两位小数",
+                    summary = "曲库/推荐/播放页的 BPM 显示两位小数；关闭则按整数显示。",
+                    leading = { CardIconBadge(icon = Icons.Filled.Numbers) },
+                    trailing = {
                         Switch(
                             checked = app.settings.bpmTwoDecimals,
                             onCheckedChange = { app.settings.setTwoDecimals(it) },
                         )
                     },
+                    onClick = {
+                        app.settings.setTwoDecimals(!app.settings.bpmTwoDecimals)
+                    },
                 )
             }
 
             // 帮助与关于
-            SectionHeader("帮助与关于")
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp),
-            ) {
-                ListItem(
-                    modifier = Modifier.clickable { showAllHelp = true },
-                    headlineContent = { Text("使用说明") },
-                    supportingContent = { Text("曲库/推荐/播放/设置说明，左右滑动切换查看") },
-                    leadingContent = {
-                        Icon(Icons.AutoMirrored.Filled.HelpOutline, contentDescription = null)
-                    },
-                    trailingContent = {
-                        Icon(Icons.Filled.ChevronRight, contentDescription = null)
-                    },
+            SectionLabel("帮助与关于")
+            SettingsCard {
+                BunbeatListRow(
+                    title = "使用说明",
+                    summary = "曲库/推荐/播放/设置说明，左右滑动切换查看",
+                    leading = { CardIconBadge(icon = Icons.AutoMirrored.Filled.HelpOutline) },
+                    trailing = { RowChevron() },
+                    onClick = { showAllHelp = true },
                 )
-                HorizontalDivider(thickness = 1.dp)
-                ListItem(
-                    modifier = Modifier.clickable { app.nav.openAbout() },
-                    headlineContent = { Text("关于应用") },
-                    supportingContent = { Text("版本、简介、最新版本公告、检查更新与源码") },
+                SettingsDivider()
+                BunbeatListRow(
+                    title = "关于应用",
+                    summary = "版本、简介、最新版本公告、检查更新与源码",
                     // Dart `Icons.info_outline`；material-icons 里没有 `InfoOutline`，
                     // 用同一枚图标的线框变体 `Icons.Outlined.Info` 等价替代。
-                    leadingContent = {
-                        Icon(Icons.Outlined.Info, contentDescription = null)
-                    },
-                    trailingContent = {
-                        Icon(Icons.Filled.ChevronRight, contentDescription = null)
-                    },
+                    leading = { CardIconBadge(icon = Icons.Outlined.Info) },
+                    trailing = { RowChevron() },
+                    onClick = { app.nav.openAbout() },
                 )
             }
-            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 
@@ -186,40 +203,39 @@ fun SettingsPage(app: AppState, onBack: () -> Unit) {
 }
 
 /**
- * 顶栏（对应 Dart `AppBar(title: Text('设置'))`）。
- *
- * 这里手写而不是用 material3 `TopAppBar`：Flutter 的 AppBar 高度是 56dp，
- * 而 M3 TopAppBar 是 64dp；手写能严格对齐 Dart 的高度与左侧返回键位置。
+ * 设置页的卡片容器（Shizuku 的填充卡）：28dp 圆角 + `surfaceContainerHighest` + 0 高度阴影。
+ * 卡片自己不设内边距，行内边距交给 [BunbeatListRow] 自己（左右 16dp）负责。
  */
 @Composable
-private fun SettingsTopBar(title: String, onBack: () -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.surface) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp)
-                .padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-            }
-            Text(title, style = MaterialTheme.typography.titleLarge)
-        }
-    }
+private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = kCardCorner,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        content = content,
+    )
 }
 
-/** 分组标题（对应 Dart `SettingsPage._sectionHeader`）。 */
+/** 卡片内部的分隔线（左右缩进 16dp，与卡片内容对齐）。 */
 @Composable
-private fun SectionHeader(text: String) {
-    Text(
-        text,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 8.dp),
-        style = MaterialTheme.typography.labelLarge.copy(
-            color = MaterialTheme.colorScheme.primary,
-        ),
+private fun SettingsDivider() {
+    HorizontalDivider(
+        modifier = Modifier.padding(horizontal = 16.dp),
+        thickness = 1.dp,
+        color = MaterialTheme.colorScheme.outlineVariant,
+    )
+}
+
+/** 列表行右侧的「进入下一级」箭头。 */
+@Composable
+private fun RowChevron() {
+    Icon(
+        imageVector = Icons.Filled.ChevronRight,
+        contentDescription = null,
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
 
@@ -299,7 +315,7 @@ private fun ThemeModeSelector(app: AppState) {
 /** 主题色色块的整体排布（对应 Dart 的 `Wrap(spacing: 12, runSpacing: 12)`）。 */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ColorSwatchWrap(app: AppState) {
+private fun ColorSwatchWrap(app: AppState, showSelection: Boolean) {
     FlowRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -309,9 +325,10 @@ private fun ColorSwatchWrap(app: AppState) {
             ColorSwatch(
                 color = opt.color,
                 name = opt.name,
+                // 跟随壁纸时（showSelection = false）不标出任何选中预设色：配色不来自它们。
                 // Dart 比较的是 `toARGB32()`；Compose 的 `Color` 是值类，
                 // 直接相等比较等价（kThemeColors 里的颜色都是不透明 ARGB）。
-                selected = app.settings.seed == opt.color,
+                selected = showSelection && app.settings.seed == opt.color,
                 onTap = { app.settings.setSeed(opt.color) },
             )
         }
@@ -350,6 +367,7 @@ private fun ColorSwatch(
             contentAlignment = Alignment.Center,
         ) {
             if (selected) {
+                // 色块本身是固定品牌色，对勾用白色而不是主题色，避免在浅色预设上看不清。
                 Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White)
             }
         }
